@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
