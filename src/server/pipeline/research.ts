@@ -45,6 +45,31 @@ async function persistAgentResult(
 }
 
 /**
+ * Persists the Competitor Agent's findings into the Competitor /
+ * CompetitorSighting tables so the Competitors screen shows real,
+ * queryable data instead of staying permanently empty in V1.
+ */
+async function persistCompetitorSightings(
+  researchRunId: string,
+  productId: string,
+  competitors: { name: string; priceEur: number; positioning: string }[],
+) {
+  for (const c of competitors) {
+    const existing = await prisma.competitor.findFirst({ where: { name: c.name, domain: null } });
+    const competitor = existing ?? (await prisma.competitor.create({ data: { name: c.name } }));
+    await prisma.competitorSighting.create({
+      data: {
+        competitorId: competitor.id,
+        productId,
+        researchRunId,
+        price: c.priceEur,
+        positioning: c.positioning,
+      },
+    });
+  }
+}
+
+/**
  * Runs the full specialist-agent suite + Skeptic + Judge for one
  * shortlisted product and persists every AgentResult + the final Score.
  * Every agent call goes through the shared CostController, so a
@@ -77,6 +102,7 @@ export async function runDeepResearch(
   await persistAgentResult(researchRunId, bundle.id, AgentType.COMPETITOR, competitorRes);
   await persistAgentResult(researchRunId, bundle.id, AgentType.BRAND, brandRes);
   await persistAgentResult(researchRunId, bundle.id, AgentType.RISK, riskRes);
+  await persistCompetitorSightings(researchRunId, bundle.id, competitorRes.findings.competitors);
 
   const angleRes =
     brandRes.findings.brandabilityScore >= ANGLE_MIN_BRANDABILITY_SCORE

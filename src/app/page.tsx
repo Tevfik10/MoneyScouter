@@ -1,69 +1,227 @@
-import Image from "next/image";
+import Link from "next/link";
+import { ArrowRight, Sparkles } from "lucide-react";
+import { PageHeader } from "@/components/page-header";
+import { RunScoutButton } from "@/components/run-scout-button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
+import { VerdictBadge, moneyScoreColorClass } from "@/components/verdict-badge";
+import { formatEur, formatNumber, formatRelativeToNow } from "@/lib/format";
+import {
+  getAngleHook,
+  getBudgetSnapshot,
+  getLatestRun,
+  getMarginSnapshot,
+  getMonthSpend,
+  getTopOpportunities,
+} from "@/server/queries/dashboard";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+const FUNNEL_STAGES: Array<{ key: string; label: string }> = [
+  { key: "discoveredCount", label: "discovered" },
+  { key: "rejectedCount", label: "auto-rejected" },
+  { key: "passedFilterCount", label: "passed filters" },
+  { key: "enrichedCount", label: "analyzed" },
+  { key: "deepResearchedCount", label: "deeply researched" },
+  { key: "highPotentialCount", label: "high-potential" },
+];
+
+export default async function DashboardPage() {
+  const run = await getLatestRun();
+  const budget = await getBudgetSnapshot();
+  const monthSpend = await getMonthSpend();
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div>
+      <PageHeader
+        title="Dashboard"
+        description={
+          run
+            ? `Last run ${formatRelativeToNow(run.startedAt)} — ${run.status.replace("_", " ").toLowerCase()}`
+            : "No run yet. Start your first Scout run below."
+        }
+        actions={<RunScoutButton />}
+      />
+
+      <div className="space-y-6 p-6">
+        {!run ? (
+          <EmptyState />
+        ) : (
+          <>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    Last run funnel
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-wrap items-stretch gap-2">
+                    {FUNNEL_STAGES.map((stage, i) => (
+                      <div key={stage.key} className="flex items-center gap-2">
+                        <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 min-w-[92px]">
+                          <div className="text-lg font-semibold tabular-nums">
+                            {formatNumber((run as unknown as Record<string, number>)[stage.key] ?? 0)}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">{stage.label}</div>
+                        </div>
+                        {i < FUNNEL_STAGES.length - 1 && (
+                          <ArrowRight className="size-4 shrink-0 text-muted-foreground/50" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {run.stopReason && (
+                    <p className="mt-4 text-xs text-amber-600 dark:text-amber-400">
+                      Stopped early: {run.stopReason}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">AI cost</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div>
+                    <div className="flex items-baseline justify-between text-sm">
+                      <span>Today</span>
+                      <span className="tabular-nums font-medium">
+                        {formatEur(budget.spentTodayEur)} / {formatEur(budget.dailyTargetEur)}
+                      </span>
+                    </div>
+                    <Progress
+                      value={Math.min(100, (budget.spentTodayEur / budget.hardLimitEur) * 100)}
+                      className="mt-1.5 h-1.5"
+                    />
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      Hard limit {formatEur(budget.hardLimitEur)}
+                    </div>
+                  </div>
+                  <div className="flex items-baseline justify-between text-sm border-t border-border pt-3">
+                    <span>This month</span>
+                    <span className="tabular-nums font-medium">{formatEur(monthSpend)}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between text-sm">
+                    <span>This run</span>
+                    <span className="tabular-nums font-medium">{formatEur(run.spendEur)}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <TopOpportunities runId={run.id} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+async function TopOpportunities({ runId }: { runId: string }) {
+  const scores = await getTopOpportunities(runId, 5);
+
+  if (scores.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-center text-sm text-muted-foreground">
+          No INTERESTING or HIGH_POTENTIAL opportunities in the last run. Check{" "}
+          <Link href="/products" className="underline underline-offset-2">
+            Products
+          </Link>{" "}
+          for everything that was evaluated.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div>
+      <h2 className="mb-3 text-sm font-medium text-muted-foreground">Top opportunities</h2>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {await Promise.all(
+          scores.map(async (score) => {
+            const [angleHook, margin] = await Promise.all([
+              getAngleHook(runId, score.productId),
+              getMarginSnapshot(runId, score.productId),
+            ]);
+            const bestSource = score.product.sources[0];
+            return (
+              <Link key={score.id} href={`/opportunities/${score.productId}`} className="group">
+                <Card className="h-full transition-colors group-hover:border-primary/40">
+                  <CardHeader className="flex-row items-start justify-between gap-2 space-y-0">
+                    <div className="min-w-0">
+                      <CardTitle className="text-base leading-snug">{score.product.title}</CardTitle>
+                      <Badge variant="secondary" className="mt-1.5 font-normal">
+                        {score.product.category}
+                      </Badge>
+                    </div>
+                    <div className={`shrink-0 text-2xl font-bold tabular-nums ${moneyScoreColorClass(score.moneyScore)}`}>
+                      {score.moneyScore}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <VerdictBadge verdict={score.verdict} />
+                    {bestSource && margin && (
+                      <div className="grid grid-cols-3 gap-2 text-xs">
+                        <div>
+                          <div className="text-muted-foreground">Buy price</div>
+                          <div className="font-medium tabular-nums">{formatEur(bestSource.price)}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Est. retail</div>
+                          <div className="font-medium tabular-nums">{formatEur(margin.sellingPriceEur)}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Margin</div>
+                          <div className="font-medium tabular-nums">{margin.marginPercent}%</div>
+                        </div>
+                      </div>
+                    )}
+                    {angleHook && (
+                      <p className="flex items-start gap-1.5 text-xs italic text-muted-foreground">
+                        <Sparkles className="mt-0.5 size-3.5 shrink-0" />
+                        {angleHook}
+                      </p>
+                    )}
+                    {score.why[0] && (
+                      <p className="text-xs">
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">Why: </span>
+                        {score.why[0]}
+                      </p>
+                    )}
+                    {score.concerns[0] && (
+                      <p className="text-xs">
+                        <span className="font-medium text-amber-600 dark:text-amber-400">Risk: </span>
+                        {score.concerns[0]}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          }),
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <Card>
+      <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
+        <Sparkles className="size-8 text-muted-foreground" />
+        <div>
+          <p className="font-medium">MoneyScouter hasn&apos;t run yet</p>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            Click &ldquo;Run Scout&rdquo; to discover, filter and research products end-to-end, staying
+            within your configured AI budget.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
