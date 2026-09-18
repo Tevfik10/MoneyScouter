@@ -1,0 +1,435 @@
+// MoneyScouter — Prisma schema
+// See docs/ARCHITECTURE.md section D for the design rationale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum ProductStatus {
+  DISCOVERED
+  FILTERED_OUT
+  ENRICHED
+  SHORTLISTED
+  RESEARCHED
+  REJECTED
+  WATCHLISTED
+  INTERESTING
+  HIGH_POTENTIAL
+}
+
+enum ComplianceRisk {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  BUDGET_STOPPED
+}
+
+enum DecisionStage {
+  FILTER
+  ENRICHMENT
+  SHORTLIST
+  JUDGE
+}
+
+// Funnel / judge verdicts, shared across stages (a given stage only uses a
+// subset — e.g. FILTER only ever produces PASS or REJECT).
+enum Verdict {
+  PASS
+  REJECT
+  WATCH
+  INTERESTING
+  HIGH_POTENTIAL
+}
+
+enum AgentType {
+  MARKET
+  COMPETITOR
+  SUPPLIER
+  MARGIN
+  BRAND
+  ANGLE
+  RISK
+  SKEPTIC
+  JUDGE
+}
+
+enum ModelTier {
+  CHEAP
+  STANDARD
+  STRONG
+}
+
+enum TaskType {
+  CLASSIFICATION
+  EXTRACTION
+  SUMMARIZATION
+  REASONING
+  JUDGE
+}
+
+enum AgentResultStatus {
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+enum ValidationStatus {
+  DRAFT
+  READY_FOR_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+// ---------------------------------------------------------------------------
+// Core product graph
+// ---------------------------------------------------------------------------
+
+model Product {
+  id              String         @id @default(cuid())
+  title           String
+  normalizedTitle String
+  category        String
+  description     String?
+  imageUrl        String?
+  status          ProductStatus  @default(DISCOVERED)
+  complianceRisk  ComplianceRisk @default(LOW)
+
+  // Denormalized "latest known" values for fast list/dashboard queries.
+  // Always derivable from Score/Decision history — kept in sync by the
+  // pipeline, never hand-edited.
+  currentScore   Int?
+  currentVerdict Verdict?
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  sources             ProductSource[]
+  fingerprints        ProductFingerprint[]
+  decisions           Decision[]
+  agentResults        AgentResult[]
+  scores              Score[]
+  watchlistEntry      Watchlist?
+  competitorSightings CompetitorSighting[]
+  validationTests     ValidationTest[]
+  aiCalls             AiCall[]
+
+  @@index([status])
+  @@index([category])
+  @@index([normalizedTitle])
+}
+
+model Supplier {
+  id         String  @id @default(cuid())
+  name       String
+  platform   String // "aliexpress" | "alibaba" | "cjdropshipping" | "other"
+  externalId String?
+  rating     Float?
+  url        String?
+  createdAt  DateTime @default(now())
+
+  sources ProductSource[]
+
+  @@unique([platform, externalId])
+}
+
+model ProductSource {
+  id                String   @id @default(cuid())
+  productId         String
+  product           Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  supplierId        String
+  supplier          Supplier @relation(fields: [supplierId], references: [id])
+  supplierProductId String
+
+  url           String?
+  price         Decimal
+  currency      String   @default("EUR")
+  shippingCost  Decimal?
+  shippingDays  Int?
+  moq           Int?
+  reviewCount   Int?
+  orderCount    Int?
+  rating        Float?
+  weightGrams   Int?
+  raw           Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  priceHistory PriceHistory[]
+
+  @@unique([supplierId, supplierProductId])
+  @@index([productId])
+}
+
+// Deduplication key -> product id. "Never pay twice": every discovered raw
+// item is hashed and looked up here before any analysis happens.
+model ProductFingerprint {
+  id        String   @id @default(cuid())
+  hash      String   @unique
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  algorithm String   @default("v1")
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+}
+
+model PriceHistory {
+  id              String        @id @default(cuid())
+  productSourceId String
+  productSource   ProductSource @relation(fields: [productSourceId], references: [id], onDelete: Cascade)
+  price           Decimal
+  observedAt      DateTime      @default(now())
+
+  @@index([productSourceId, observedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline execution
+// ---------------------------------------------------------------------------
+
+model ResearchRun {
+  id        String    @id @default(cuid())
+  status    RunStatus @default(PENDING)
+  trigger   String    @default("manual") // "manual" | "scheduled"
+  startedAt DateTime  @default(now())
+  finishedAt DateTime?
+
+  discoveredCount     Int @default(0)
+  rejectedCount       Int @default(0)
+  passedFilterCount   Int @default(0)
+  enrichedCount       Int @default(0)
+  shortlistedCount    Int @default(0)
+  deepResearchedCount Int @default(0)
+  highPotentialCount  Int @default(0)
+
+  budgetEur    Decimal
+  hardLimitEur Decimal
+  spendEur     Decimal @default(0)
+  stopReason   String?
+
+  decisions    Decision[]
+  agentResults AgentResult[]
+  scores       Score[]
+  aiCalls      AiCall[]
+
+  createdAt DateTime @default(now())
+
+  @@index([status])
+  @@index([startedAt])
+}
+
+// Content-hash keyed cache so unchanged products are never re-billed by the
+// same pipeline stage twice.
+model ResearchCache {
+  id        String    @id @default(cuid())
+  cacheKey  String    @unique
+  stage     String // "enrichment" | "deep_research"
+  productId String
+  output    Json
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  @@index([productId, stage])
+}
+
+model AgentResult {
+  id             String            @id @default(cuid())
+  researchRunId  String
+  researchRun    ResearchRun       @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  agentType      AgentType
+  status         AgentResultStatus @default(COMPLETED)
+  summary        String
+  findings       Json
+  modelTier      ModelTier
+  promptVersionId String?
+  promptVersion  PromptVersion?    @relation(fields: [promptVersionId], references: [id])
+  startedAt      DateTime          @default(now())
+  finishedAt     DateTime?
+
+  @@unique([researchRunId, productId, agentType])
+  @@index([productId])
+}
+
+model Score {
+  id            String      @id @default(cuid())
+  researchRunId String
+  researchRun   ResearchRun @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // Rubric, each /10 — see docs/ARCHITECTURE.md section on Judge scoring.
+  demand          Int
+  trend           Int
+  margin          Int
+  competition     Int
+  brandability    Int
+  marketingAngles Int
+  supplierQuality Int
+  shipping        Int
+  operationalEase Int
+  risk            Int
+
+  moneyScore  Int // 0-100, weighted combination of the above
+  verdict     Verdict
+  why         String[]
+  concerns    String[]
+  nextStep    String?
+  weightsUsed Json // the exact weights used, for auditability
+
+  createdAt DateTime @default(now())
+
+  @@unique([researchRunId, productId])
+  @@index([productId])
+}
+
+// Funnel decisions + audit trail: every REJECT/PASS/WATCH/... a product
+// receives at any stage, with enough references to reconstruct "why".
+model Decision {
+  id              String        @id @default(cuid())
+  researchRunId   String?
+  researchRun     ResearchRun?  @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stage           DecisionStage
+  verdict         Verdict
+  reasons         String[]
+  ruleSetVersion  String?
+  agentType       AgentType?
+  modelTier       ModelTier?
+  promptVersionId String?
+  costEur         Decimal?
+  createdAt       DateTime      @default(now())
+
+  @@index([productId])
+  @@index([researchRunId])
+}
+
+// ---------------------------------------------------------------------------
+// Cost control
+// ---------------------------------------------------------------------------
+
+model AiCall {
+  id              String         @id @default(cuid())
+  researchRunId   String?
+  researchRun     ResearchRun?   @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  productId       String?
+  product         Product?       @relation(fields: [productId], references: [id])
+  agentType       AgentType?
+  provider        String
+  model           String
+  tier            ModelTier
+  taskType        TaskType
+  inputTokens     Int
+  outputTokens    Int
+  estimatedCostEur Decimal
+  promptVersionId String?
+  promptVersion   PromptVersion? @relation(fields: [promptVersionId], references: [id])
+  createdAt       DateTime       @default(now())
+
+  @@index([createdAt])
+  @@index([researchRunId])
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model PromptVersion {
+  id        String    @id @default(cuid())
+  agentType AgentType
+  version   Int
+  template  String
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  agentResults AgentResult[]
+  aiCalls      AiCall[]
+
+  @@unique([agentType, version])
+}
+
+// ---------------------------------------------------------------------------
+// Watchlist / competitors / validation lab
+// ---------------------------------------------------------------------------
+
+model Watchlist {
+  id          String    @id @default(cuid())
+  productId   String    @unique
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  reason      String
+  addedAt     DateTime  @default(now())
+  lastAlertAt DateTime?
+}
+
+model Competitor {
+  id        String   @id @default(cuid())
+  name      String
+  domain    String?
+  createdAt DateTime @default(now())
+
+  sightings CompetitorSighting[]
+
+  @@unique([name, domain])
+}
+
+model CompetitorSighting {
+  id            String     @id @default(cuid())
+  competitorId  String
+  competitor    Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  researchRunId String?
+  price         Decimal?
+  positioning   String?
+  url           String?
+  createdAt     DateTime   @default(now())
+
+  @@index([productId])
+}
+
+// Placeholder for the future Validation Lab (section 17). No automation is
+// wired up in V1 — this exists so the interface/shape is ready.
+model ValidationTest {
+  id                 String            @id @default(cuid())
+  productId          String
+  product            Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  status             ValidationStatus  @default(DRAFT)
+  brandName          String?
+  positioning        String?
+  usp                String?
+  targetAudience     String?
+  headline           String?
+  description        String?
+  faq                Json?
+  price              Decimal?
+  offer              String?
+  bundles            Json?
+  landingCopy        String?
+  adConcepts         Json?
+  imagePrompts       Json?
+  suggestedBudgetEur Decimal?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+}
