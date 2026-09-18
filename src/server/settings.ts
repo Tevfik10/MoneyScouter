@@ -50,7 +50,7 @@ const DEFAULT_FILTER_THRESHOLDS: FilterThresholds = {
     "counterfeit",
     "hazardous-chemicals",
   ],
-  highRiskCategories: ["electronics-battery", "childrens-products", "cosmetics"],
+  highRiskCategories: ["smart-home", "toys-games"],
 };
 
 const scoringWeightsSchema = z.object({
