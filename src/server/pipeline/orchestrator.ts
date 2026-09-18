@@ -148,14 +148,19 @@ export async function runScout(options: RunScoutOptions = {}): Promise<RunScoutR
       await prisma.product.update({ where: { id: p.productId }, data: { status: ProductStatus.SHORTLISTED } });
     }
     for (const p of droppedAtEnrichment) {
-      // stays ENRICHED — didn't clear the bar for deep research this run
+      // stays ENRICHED — either below the enrichment score minimum, or
+      // above it but outside the shortlist pool's capacity this run.
+      const reason =
+        p.enrichmentScore < settings.shortlist.enrichmentMinScore
+          ? `enrichment score ${p.enrichmentScore} below shortlist minimum ${settings.shortlist.enrichmentMinScore}`
+          : `enrichment score ${p.enrichmentScore} cleared the minimum but didn't fit the shortlist pool (cap ${settings.shortlist.enrichmentCutCount})`;
       await prisma.decision.create({
         data: {
           researchRunId: run.id,
           productId: p.productId,
           stage: "SHORTLIST",
           verdict: Verdict.WATCH,
-          reasons: [`enrichment score ${p.enrichmentScore} below shortlist minimum ${settings.shortlist.enrichmentMinScore}`],
+          reasons: [reason],
         },
       });
     }

@@ -23,9 +23,15 @@ export function selectShortlist<T extends ShortlistCandidate>(
 ): ShortlistOutcome<T> {
   const sorted = [...candidates].sort((a, b) => b.enrichmentScore - a.enrichmentScore);
   const aboveMin = sorted.filter((c) => c.enrichmentScore >= settings.enrichmentMinScore);
-  const droppedAtEnrichment = sorted.filter((c) => c.enrichmentScore < settings.enrichmentMinScore);
 
+  // The shortlist pool is capped at enrichmentCutCount even among
+  // above-minimum candidates — anyone who clears the score bar but doesn't
+  // fit in the pool is "dropped" here too (for capacity, not quality), so
+  // every candidate ends up in exactly one of the three buckets.
   const cutForShortlist = aboveMin.slice(0, settings.enrichmentCutCount);
+  const cutIds = new Set(cutForShortlist.map((c) => c.productId));
+  const droppedAtEnrichment = sorted.filter((c) => !cutIds.has(c.productId));
+
   const shortlisted = cutForShortlist.slice(0, settings.deepResearchCutCount);
   const watched = cutForShortlist.slice(settings.deepResearchCutCount);
 
