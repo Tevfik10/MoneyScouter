@@ -104,7 +104,7 @@ export class MockDiscoveryProvider implements DiscoveryProvider {
 
   async discover(params: DiscoveryParams): Promise<DiscoveredProduct[]> {
     const runRng = new SeededRandom(params.seed);
-    let candidates = params.categories?.length
+    const candidates = params.categories?.length
       ? POOL.filter((p) => params.categories!.includes(p.category))
       : POOL;
 
