@@ -18,7 +18,7 @@ Requires a local PostgreSQL instance.
 
 ```bash
 pnpm install
-cp .env.example .env   # set DATABASE_URL
+cp .env.example .env   # set DATABASE_URL (and DIRECT_URL — see below)
 pnpm exec prisma migrate deploy
 pnpm run db:seed        # runs one real Scout run to populate demo data
 pnpm run dev
@@ -29,6 +29,35 @@ on the Dashboard to trigger a new pipeline run at any time — it discovers,
 deduplicates, filters, enriches, shortlists, deep-researches (specialist
 agents + Skeptic + Judge) and scores products end to end, never exceeding
 the configured daily AI budget (see Settings).
+
+## Environment variables
+
+- `DATABASE_URL` — the connection Prisma Client uses for all runtime
+  queries. Against Supabase, use the **Transaction Pooler** connection
+  string (port 6543) with `?pgbouncer=true` appended, e.g.
+  `postgresql://...@aws-0-xx.pooler.supabase.com:6543/postgres?pgbouncer=true`.
+  The `pgbouncer=true` flag tells Prisma to skip prepared statements, which
+  PgBouncer's transaction-mode pooling doesn't support across requests.
+- `DIRECT_URL` — a non-pooled (or session-mode pooled) connection used only
+  by the Prisma CLI for `prisma migrate deploy`/`dev`. Transaction-mode
+  pooling doesn't reliably support the advisory locks and DDL migrations
+  need. Against Supabase, use the **Session Pooler** connection string
+  (port 5432 via the pooler host) rather than the raw direct connection —
+  most serverless platforms, including Vercel, can't reliably reach
+  Supabase's direct connection over IPv6. The generated Prisma Client
+  never uses this at runtime, only the CLI does at build/migration time.
+
+## Deploying (Vercel + Supabase)
+
+1. In Vercel → Project → Settings → Environment Variables, set:
+   - `DATABASE_URL` = Supabase Transaction Pooler string + `?pgbouncer=true`
+   - `DIRECT_URL` = Supabase Session Pooler string (or direct connection,
+     if your Vercel deployment has IPv6 egress)
+2. The `build` script (`prisma migrate deploy && next build`) runs
+   migrations against `DIRECT_URL` automatically on every deploy, before
+   building. It only ever applies pending migrations — it never drops
+   tables or data, and is a safe no-op when the schema is already current.
+3. Deploy. No manual migration step is required.
 
 ## Development
 

@@ -2,12 +2,28 @@
 // See docs/ARCHITECTURE.md section D for the design rationale.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Vercel's serverless runtime is Amazon Linux (OpenSSL 3.x). "native" alone
+  // is normally sufficient since `prisma generate` runs at Vercel build
+  // time in the same environment the function later runs in, but declaring
+  // the target explicitly is the documented, zero-risk way to avoid "query
+  // engine not found" errors if that assumption ever doesn't hold.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // Pooled connection (e.g. Supabase Transaction Pooler / PgBouncer) for
+  // normal query traffic from serverless functions.
+  url       = env("DATABASE_URL")
+  // Direct (unpooled, session-mode) connection used only by the Prisma CLI
+  // for schema migrations — `prisma migrate deploy`/`dev` route through
+  // this instead of `url` automatically. Transaction-mode pooling does not
+  // reliably support the advisory locks and DDL that migrations need. The
+  // generated Prisma Client itself never uses directUrl at runtime, only
+  // `url` — but this env var must still be set wherever `prisma generate`
+  // or `prisma migrate` run (i.e. the Vercel build step), see README.
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------------
