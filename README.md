@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MoneyScouter
 
-## Getting Started
+An AI commerce intelligence platform that discovers, filters, researches
+and scores product opportunities — spending AI budget only on the small
+fraction of candidates that survive deterministic, zero-cost filtering
+first. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full
+system design (data flow, agent architecture, DB schema, cost control,
+provider architecture, V1 scope).
 
-First, run the development server:
+## Stack
+
+Next.js (App Router) + TypeScript + Tailwind + shadcn/ui, Prisma +
+PostgreSQL, Vitest.
+
+## Getting started
+
+Requires a local PostgreSQL instance.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+cp .env.example .env   # set DATABASE_URL
+pnpm exec prisma migrate deploy
+pnpm run db:seed        # runs one real Scout run to populate demo data
+pnpm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). Click **Run Scout**
+on the Dashboard to trigger a new pipeline run at any time — it discovers,
+deduplicates, filters, enriches, shortlists, deep-researches (specialist
+agents + Skeptic + Judge) and scores products end to end, never exceeding
+the configured daily AI budget (see Settings).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Development
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+pnpm run lint          # eslint
+pnpm exec tsc --noEmit # typecheck
+pnpm run test          # vitest (includes an integration test against
+                        # the local Postgres instance)
+pnpm run build          # production build
+```
 
-## Learn More
+## Providers
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+V1 ships a deterministic mock discovery provider and a deterministic mock
+model provider so the full pipeline runs for free, end to end, without any
+external API keys. Real providers (AliExpress, Alibaba, CJdropshipping,
+Google Shopping, Trends, a real LLM) implement the same
+`DiscoveryProvider` / `ModelProvider` interfaces under
+`src/server/providers/` and `src/server/ai/providers/` — see
+`docs/ARCHITECTURE.md` section F.
