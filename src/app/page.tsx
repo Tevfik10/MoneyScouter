@@ -19,6 +19,8 @@ import { getApifyBudgetSnapshot } from "@/server/queries/apify";
 import { formatUsd } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
+// See src/app/research-runs/page.tsx for why this is set.
+export const maxDuration = 300;
 
 const FUNNEL_STAGES: Array<{ key: string; label: string }> = [
   { key: "discoveredCount", label: "discovered" },
@@ -122,13 +124,13 @@ export default async function DashboardPage() {
                     <span className="tabular-nums font-medium">{formatEur(run.spendEur)}</span>
                   </div>
                   <div className="flex items-baseline justify-between text-sm border-t border-border pt-3">
-                    <span>Apify today</span>
+                    <span>Apify today (actual)</span>
                     <span className="tabular-nums font-medium">
                       {formatUsd(apifyBudget.spentTodayUsd)} / {formatUsd(apifyBudget.dailyTargetUsd)}
                     </span>
                   </div>
                   <div className="flex items-baseline justify-between text-sm">
-                    <span>This run (Apify)</span>
+                    <span>This run (Apify, actual)</span>
                     <span className="tabular-nums font-medium">{formatUsd(run.apifySpendUsd)}</span>
                   </div>
                 </CardContent>

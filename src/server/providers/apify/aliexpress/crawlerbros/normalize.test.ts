@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeAliExpressItem } from "@/server/providers/apify/aliexpress/normalize";
+import { normalizeAliExpressItem } from "@/server/providers/apify/aliexpress/crawlerbros/normalize";
 
 describe("normalizeAliExpressItem", () => {
   it("normalizes a well-formed item", () => {

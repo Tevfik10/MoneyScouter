@@ -107,14 +107,24 @@ const scoutConfigSchema = z.object({
   maxDiscoveryItemsTotal: z.number().int().min(1),
   maxMarketEnrichmentItems: z.number().int().min(0),
   testModeApifyBudgetCapUsd: z.number().positive(),
+  // Which AliExpress discovery Actor to drive — see
+  // src/server/providers/apify/aliexpress/index.ts for the registry.
+  // "aliexpress-tortuga" (default) batches keywords into one Actor run at
+  // $2.00/1,000 results; "aliexpress-crawlerbros" is kept as a fallback,
+  // one run per keyword at $3.00/1,000.
+  aliexpressProviderId: z.string(),
 });
 export type ScoutConfig = z.infer<typeof scoutConfigSchema>;
 const DEFAULT_SCOUT_CONFIG: ScoutConfig = {
   testMode: true,
-  maxKeywordsPerRun: 3,
-  maxDiscoveryItemsTotal: 300,
-  maxMarketEnrichmentItems: 20,
+  // TEST_SCOUT minimum-cost redesign: start with 1 keyword so real
+  // cost-per-product can be established before scaling up (master spec
+  // V1.1 cost-efficiency follow-up).
+  maxKeywordsPerRun: 1,
+  maxDiscoveryItemsTotal: 100,
+  maxMarketEnrichmentItems: 10,
   testModeApifyBudgetCapUsd: 0.5,
+  aliexpressProviderId: "aliexpress-tortuga",
 };
 
 // V1.1 — rule-based Judge rubric weights (master spec V1.1 section 11).

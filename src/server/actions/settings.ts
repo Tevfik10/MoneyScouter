@@ -90,6 +90,7 @@ export async function updateScoutConfigAction(formData: FormData) {
     maxDiscoveryItemsTotal: num(formData, "maxDiscoveryItemsTotal"),
     maxMarketEnrichmentItems: num(formData, "maxMarketEnrichmentItems"),
     testModeApifyBudgetCapUsd: num(formData, "testModeApifyBudgetCapUsd"),
+    aliexpressProviderId: String(formData.get("aliexpressProviderId") ?? "aliexpress-tortuga"),
   });
   revalidatePath("/settings");
   revalidatePath("/discover");

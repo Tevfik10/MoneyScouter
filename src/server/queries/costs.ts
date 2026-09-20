@@ -49,13 +49,36 @@ function startOfTodayUtc(): Date {
 }
 
 export async function getApifyCostOverview() {
-  const [byPurpose, spentToday, byActor] = await Promise.all([
+  const [byPurpose, spentToday, byActor, recentCalls] = await Promise.all([
     prisma.apifyCall.groupBy({ by: ["purpose"], _sum: { actualCostUsd: true }, _count: { _all: true } }),
     prisma.apifyCall.aggregate({
       where: { startedAt: { gte: startOfTodayUtc() } },
       _sum: { actualCostUsd: true },
     }),
     prisma.apifyCall.groupBy({ by: ["actorId"], _sum: { actualCostUsd: true }, _count: { _all: true } }),
+    // Full per-call observability — every field needed to reconstruct
+    // exactly what was requested, what came back, and what it actually
+    // cost (V1.1 cost-efficiency follow-up).
+    prisma.apifyCall.findMany({
+      orderBy: { startedAt: "desc" },
+      take: 25,
+      select: {
+        id: true,
+        actorId: true,
+        provider: true,
+        purpose: true,
+        keyword: true,
+        requestedLimit: true,
+        itemCount: true,
+        apifyRunId: true,
+        datasetId: true,
+        status: true,
+        estimatedCostUsd: true,
+        actualCostUsd: true,
+        durationMs: true,
+        startedAt: true,
+      },
+    }),
   ]);
 
   const totalSpendUsd = byPurpose.reduce((sum, p) => sum + Number(p._sum.actualCostUsd ?? 0), 0);
@@ -64,6 +87,7 @@ export async function getApifyCostOverview() {
   return {
     byPurpose,
     byActor,
+    recentCalls,
     spentTodayUsd: Number(spentToday._sum.actualCostUsd ?? 0),
     totalSpendUsd,
     totalCalls,

@@ -93,6 +93,14 @@ export class ApifyClient {
     throw lastError instanceof Error ? lastError : new ApifyError(`Apify request to ${path} failed`);
   }
 
+  /**
+   * Starting a run is a non-idempotent POST: if Apify creates the run
+   * server-side but the response is lost (network blip, 5xx after the run
+   * already started), a blind retry would start a SECOND paid Actor run for
+   * the same request. We have no idempotency key to prove a retry is safe,
+   * so this call is never retried — a failure here surfaces as a failed
+   * call rather than risking a duplicate charge.
+   */
   async startRun(
     actorId: string,
     input: Record<string, unknown>,
@@ -107,6 +115,7 @@ export class ApifyClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
+      retries: 0,
     });
     const json = (await res.json()) as { data: Record<string, unknown> };
     return toRunInfo(actorId, json.data);
@@ -114,6 +123,20 @@ export class ApifyClient {
 
   async getRun(runId: string, actorId = ""): Promise<ApifyRunInfo> {
     const res = await this.request(`/actor-runs/${runId}`);
+    const json = (await res.json()) as { data: Record<string, unknown> };
+    return toRunInfo(actorId, json.data);
+  }
+
+  /**
+   * Aborts a starting/running Actor run so it stops billing. A no-op on a
+   * run that has already reached a terminal status — safe to call whenever
+   * we're giving up on a run (budget stop, timeout, our own shutdown path),
+   * without first checking its current status. Best-effort: callers should
+   * swallow failures here rather than let them mask the original error.
+   */
+  async abortRun(runId: string, opts: { graceful?: boolean } = {}, actorId = ""): Promise<ApifyRunInfo> {
+    const query = opts.graceful ? "?gracefully=true" : "";
+    const res = await this.request(`/actor-runs/${runId}/abort${query}`, { method: "POST" });
     const json = (await res.json()) as { data: Record<string, unknown> };
     return toRunInfo(actorId, json.data);
   }
@@ -160,8 +183,12 @@ export class ApifyClient {
     opts: ApifyRunActorOptions = {},
   ): Promise<ApifyRunAndFetchResult<T>> {
     const started = await this.startRun(actorId, input, opts);
-    const finished = await this.waitForRun(started.runId, opts).catch((err) => {
+    const finished = await this.waitForRun(started.runId, opts).catch(async (err) => {
       if (err instanceof ApifyTimeoutError) {
+        // We're giving up on waiting — the run is still consuming/billing on
+        // Apify's side unless we abort it. Best-effort: a failed abort here
+        // must not mask the original timeout.
+        await this.abortRun(started.runId, {}, actorId).catch(() => undefined);
         // Return what we know so far rather than throwing — the caller can
         // decide whether a still-running/unknown-status run is usable.
         return { ...started, status: "TIMED-OUT" } satisfies ApifyRunInfo;

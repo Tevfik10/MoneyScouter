@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { getAllSettings } from "@/server/settings";
 import { prisma } from "@/server/db";
+import { ALIEXPRESS_PROVIDERS } from "@/server/providers/apify/aliexpress";
 import {
   updateApifyBudgetAction,
   updateBudgetAction,
@@ -86,6 +87,23 @@ export default async function SettingsPage() {
               <Field label="Max discovery items" name="maxDiscoveryItemsTotal" defaultValue={settings.scoutConfig.maxDiscoveryItemsTotal} step="1" />
               <Field label="Max market-enriched items" name="maxMarketEnrichmentItems" defaultValue={settings.scoutConfig.maxMarketEnrichmentItems} step="1" />
               <Field label="Test-mode Apify cap ($)" name="testModeApifyBudgetCapUsd" defaultValue={settings.scoutConfig.testModeApifyBudgetCapUsd} />
+            </CardContent>
+            <CardContent className="max-w-xs space-y-1">
+              <Label htmlFor="aliexpressProviderId" className="text-xs text-muted-foreground">
+                AliExpress discovery Actor
+              </Label>
+              <select
+                id="aliexpressProviderId"
+                name="aliexpressProviderId"
+                defaultValue={settings.scoutConfig.aliexpressProviderId}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+              >
+                {Object.values(ALIEXPRESS_PROVIDERS).map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.actorId} {provider.supportsBatching ? "(batches keywords)" : "(one run/keyword)"}
+                  </option>
+                ))}
+              </select>
             </CardContent>
             <CardContent className="pt-0">
               <Button type="submit" size="sm">

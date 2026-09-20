@@ -2,7 +2,7 @@ import { ProductStatus, RunStatus, Verdict } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { getAllSettings } from "@/server/settings";
 import { ensureDefaultSearchTopics, markKeywordUsed, selectSearchKeywords } from "@/server/pipeline/searchKeywords";
-import { aliExpressApifyProvider } from "@/server/providers/apify/aliexpress/provider";
+import { getAliExpressProvider } from "@/server/providers/apify/aliexpress";
 import { upsertDiscoveredProduct } from "@/server/pipeline/dedup";
 import { classifyComplianceRisk, ComplianceRiskLevel, runDeterministicFilter } from "@/server/pipeline/filter";
 import { computeEnrichmentScore } from "@/server/pipeline/enrichment";
@@ -64,6 +64,16 @@ async function finalizeRun(runId: string, stats: FinalizeStats): Promise<RunScou
   return { runId, status: stats.status };
 }
 
+// Conservative self-imposed ceiling on the pipeline's total wall-clock
+// time, checked between stages and before each shortlisted product's
+// research — NOT a hard preemption mid-call. Its job is to make the
+// pipeline finalize ITSELF gracefully well before a hosting platform's
+// serverless function-duration limit could kill the process mid-flight,
+// which is the confirmed leading cause of a ResearchRun getting stuck at
+// RUNNING forever (see the V1.1 cost-efficiency investigation report).
+// Paired with `maxDuration = 300` on the pages that trigger "Run Scout".
+const MAX_PIPELINE_DURATION_MS = 210_000; // 3.5 minutes, under the 300s route ceiling
+
 /**
  * The V1.1 real pipeline — master spec V1.1 section 14: Apify discovery ->
  * normalize -> dedup -> deterministic filter -> shortlist -> Google
@@ -71,21 +81,31 @@ async function finalizeRun(runId: string, stats: FinalizeStats): Promise<RunScou
  * -> save -> dashboard. Zero LLM calls anywhere in this function or
  * anything it calls — every dollar spent goes through the Apify Cost
  * Controller, budget-checked before it's spent, never the AI one.
+ *
+ * Cost-efficiency invariant (V1.1 follow-up): a budget stop during
+ * discovery must never discard products we already paid to retrieve —
+ * dedup/filter/shortlist always run on whatever was discovered, since
+ * those stages are free, local and deterministic.
  */
 export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<RunScoutRealResult> {
+  const pipelineStartedAt = Date.now();
+  const timeBudgetExceeded = () => Date.now() - pipelineStartedAt > MAX_PIPELINE_DURATION_MS;
+
   await ensureDefaultSearchTopics();
   const settings = await getAllSettings();
   const scoutConfig = settings.scoutConfig;
   const testMode = options.testModeOverride ?? scoutConfig.testMode;
 
-  // TEST_SCOUT caps (master spec V1.1 section 15) — the default until
-  // manually changed via Settings.
-  const maxKeywords = testMode ? Math.min(3, scoutConfig.maxKeywordsPerRun) : scoutConfig.maxKeywordsPerRun;
+  // TEST_SCOUT caps (master spec V1.1 section 15, redesigned for minimum
+  // real cost per the V1.1 cost-efficiency follow-up) — hard ceilings
+  // regardless of Settings drift: 1 keyword, ≤100 raw items, ≤10 for
+  // Google Shopping enrichment, until manually changed via Settings.
+  const maxKeywords = testMode ? Math.min(1, scoutConfig.maxKeywordsPerRun) : scoutConfig.maxKeywordsPerRun;
   const maxDiscoveryItemsTotal = testMode
-    ? Math.min(300, scoutConfig.maxDiscoveryItemsTotal)
+    ? Math.min(100, scoutConfig.maxDiscoveryItemsTotal)
     : scoutConfig.maxDiscoveryItemsTotal;
   const maxMarketEnrichmentItems = testMode
-    ? Math.min(20, scoutConfig.maxMarketEnrichmentItems)
+    ? Math.min(10, scoutConfig.maxMarketEnrichmentItems)
     : scoutConfig.maxMarketEnrichmentItems;
   const apifyHardLimitUsd = testMode
     ? Math.min(scoutConfig.testModeApifyBudgetCapUsd, settings.apifyBudget.hardLimitUsd)
@@ -117,46 +137,50 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
     if (keywords.length === 0) {
       throw new Error("No search keywords are configured — add SearchTopic/SearchKeyword rows or check Settings.");
     }
+    const aliexpressProvider = getAliExpressProvider(scoutConfig.aliexpressProviderId);
 
-    // --- Steps 2-4: AliExpress discovery, normalize (inside the
-    // provider), ingest ------------------------------------------------
+    // --- Steps 2-4: AliExpress discovery (one Actor run for all
+    // keywords when the provider supports batching), normalize (inside
+    // the provider), ingest ---------------------------------------------
     const scoutStageStart = new Date();
-    const perKeywordCap = Math.max(1, Math.floor(maxDiscoveryItemsTotal / keywords.length));
-    const discovered: DiscoveredProduct[] = [];
+    let discovered: DiscoveredProduct[] = [];
     let scoutError: string | undefined;
+    let discoveryBudgetStopped = false;
+    let discoveryStopReason: string | undefined;
 
-    for (const kw of keywords) {
-      if (discovered.length >= maxDiscoveryItemsTotal) break;
-      const cap = Math.min(perKeywordCap, maxDiscoveryItemsTotal - discovered.length);
-      try {
-        const result = await aliExpressApifyProvider.search(
-          { keyword: kw.keyword, category: kw.topicName, maxItems: cap },
-          { researchRunId: run.id, costController: apifyCostController },
-        );
-        discovered.push(...result.items);
+    try {
+      const searchResult = await aliexpressProvider.search(
+        {
+          keywords: keywords.map((k) => ({ keyword: k.keyword, category: k.topicName })),
+          maxItemsTotal: maxDiscoveryItemsTotal,
+          region: "nl",
+          shipTo: "NL",
+        },
+        { researchRunId: run.id, costController: apifyCostController },
+      );
+      discovered = searchResult.items;
+      discoveryBudgetStopped = searchResult.budgetStopped;
+      discoveryStopReason = searchResult.stopReason;
+
+      for (const usage of searchResult.keywordUsage) {
+        const kw = keywords.find((k) => k.keyword === usage.keyword);
+        if (!kw) continue;
         await prisma.searchRun.create({
-          data: { researchRunId: run.id, keywordId: kw.id, itemsReturned: result.items.length },
+          data: { researchRunId: run.id, keywordId: kw.id, itemsReturned: usage.itemsReturned },
         });
-        await markKeywordUsed(kw.id);
-      } catch (err) {
-        if (err instanceof ApifyBudgetExceededError) {
-          await recordPipelineStage({
-            researchRunId: run.id,
-            stage: "SCOUT",
-            startedAt: scoutStageStart,
-            itemsProcessed: discovered.length,
-            dataSource: "apify:crawlerbros/aliexpress-scraper",
-            errorMessage: err.message,
-          });
-          return finalizeRun(run.id, {
-            discoveredCount: discovered.length,
-            status: RunStatus.BUDGET_STOPPED,
-            stopReason: err.message,
-          });
-        }
-        console.error(`[runScoutReal] AliExpress search failed for keyword "${kw.keyword}":`, err);
-        scoutError = err instanceof Error ? err.message : String(err);
       }
+      // A budget stop can mean some requested keywords were never actually
+      // attempted (batched providers stop the whole call before it starts;
+      // looping providers stop partway through). Rather than guess which
+      // ones were genuinely searched, conservatively leave all of them
+      // unmarked so they're tried first next run instead of being skipped
+      // over for a search that may never have happened.
+      if (!discoveryBudgetStopped) {
+        for (const kw of keywords) await markKeywordUsed(kw.id);
+      }
+    } catch (err) {
+      scoutError = err instanceof Error ? err.message : String(err);
+      console.error("[runScoutReal] AliExpress discovery failed:", err);
     }
 
     await recordPipelineStage({
@@ -164,11 +188,13 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
       stage: "SCOUT",
       startedAt: scoutStageStart,
       itemsProcessed: discovered.length,
-      dataSource: "apify:crawlerbros/aliexpress-scraper",
-      errorMessage: scoutError,
+      dataSource: `apify:${aliexpressProvider.actorId}`,
+      errorMessage: scoutError ?? discoveryStopReason,
     });
 
-    // --- Step 5: deduplication (no AI) --------------------------------
+    // --- Step 5: deduplication (no AI) — always runs on whatever was
+    // discovered, budget-stopped or not: this and every stage through
+    // shortlisting below is free, local and deterministic. -------------
     const dedupStageStart = new Date();
     const dedupResults: Array<{ item: DiscoveredProduct; result: Awaited<ReturnType<typeof upsertDiscoveredProduct>> }> = [];
     for (const item of discovered) {
@@ -283,7 +309,7 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
     const { shortlisted, watched, droppedAtEnrichment } = selectShortlist(enrichmentScored, {
       enrichmentCutCount: settings.shortlist.enrichmentCutCount,
       enrichmentMinScore: settings.shortlist.enrichmentMinScore,
-      // The "top 10-20" cap for Google Shopping enrichment IS the
+      // The "top 5-10" cap for Google Shopping enrichment IS the
       // deep-research pool size in this mode.
       deepResearchCutCount: maxMarketEnrichmentItems,
     });
@@ -320,14 +346,19 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
     let highPotentialCount = 0;
     let researchStopReason: string | undefined;
     let researchBudgetStopped = false;
-    // Once the Apify budget is known exhausted, stop even attempting
-    // Google Shopping for the rest of the shortlist — the same-day budget
-    // check would block every subsequent call anyway, so retrying just
-    // wastes time and produces noisy logs. Margin/Supplier/Trend/Risk/
-    // Judge still run for every product; only the market data is skipped.
-    let marketEnrichmentExhausted = false;
+    let timeBudgetStopped = false;
+    // If discovery already exhausted the Apify budget, don't even attempt
+    // Google Shopping for the shortlist — the same-day budget check would
+    // block every call anyway, so retrying just wastes time. Margin/
+    // Supplier/Trend/Risk/Judge still run for every product; only the
+    // market data is skipped.
+    let marketEnrichmentExhausted = discoveryBudgetStopped;
 
     for (const p of shortlisted) {
+      if (timeBudgetExceeded()) {
+        timeBudgetStopped = true;
+        break;
+      }
       try {
         const bundle = await buildProductBundle(p.productId);
         const productSourceId = await getBestProductSourceId(p.productId);
@@ -379,6 +410,13 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
     }
 
     // --- Steps 13-14: opportunities already saved above; finalize -----
+    const stopReason =
+      researchStopReason ??
+      discoveryStopReason ??
+      (timeBudgetStopped
+        ? `Pipeline time budget (${Math.round(MAX_PIPELINE_DURATION_MS / 1000)}s) reached after ${deepResearchedCount}/${shortlisted.length} shortlisted products — stopped early to finalize cleanly instead of risking being killed mid-run.`
+        : undefined);
+
     return finalizeRun(run.id, {
       discoveredCount: discovered.length,
       rejectedCount,
@@ -388,8 +426,8 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
       deepResearchedCount,
       marketEnrichedCount,
       highPotentialCount,
-      status: researchBudgetStopped ? RunStatus.BUDGET_STOPPED : RunStatus.COMPLETED,
-      stopReason: researchStopReason,
+      status: researchBudgetStopped || discoveryBudgetStopped ? RunStatus.BUDGET_STOPPED : RunStatus.COMPLETED,
+      stopReason,
     });
   } catch (err) {
     await prisma.researchRun.update({

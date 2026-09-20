@@ -29,11 +29,13 @@ export class GoogleShoppingApifyProvider implements MarketEnrichmentProvider {
     const input = buildActorInput(params);
     const { items: rawListings, run, costUsd } = await ctx.costController.runActorAndGetItems<unknown>({
       actorId: GOOGLE_SHOPPING_ACTOR_ID,
+      provider: this.id,
       purpose: "market_enrichment",
+      keyword: params.query,
       input,
       maxItems: params.maxResults,
       researchRunId: ctx.researchRunId,
-      opts: { timeoutSecs: 90, maxWaitMs: 120_000 },
+      opts: { timeoutSecs: 60, maxWaitMs: 75_000 },
     });
 
     const listings = rawListings

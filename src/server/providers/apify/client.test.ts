@@ -101,6 +101,58 @@ describe("ApifyClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
+  it("startRun never retries on 5xx — a non-idempotent POST must not risk starting a duplicate paid run", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation(async () => new Response("server error", { status: 500 }));
+
+    const client = new ApifyClient("test-token");
+    await expect(client.startRun("crawlerbros/aliexpress-scraper", { searchQuery: "backpack" })).rejects.toBeInstanceOf(
+      ApifyError,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("abortRun posts to the abort endpoint and returns the resulting run info", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { id: "run_1", status: "ABORTED", startedAt: "t", finishedAt: "t2" } }));
+
+    const client = new ApifyClient("test-token");
+    const info = await client.abortRun("run_1");
+
+    expect(info.status).toBe("ABORTED");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/actor-runs/run_1/abort");
+    expect((init as RequestInit).method).toBe("POST");
+  });
+
+  it("abortRun passes gracefully=true when requested", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { id: "run_1", status: "ABORTING", startedAt: "t" } }));
+
+    const client = new ApifyClient("test-token");
+    await client.abortRun("run_1", { graceful: true });
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("gracefully=true");
+  });
+
+  it("runActorAndGetItems aborts the run when it times out waiting, instead of leaving it billing unattended", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ data: { id: "run_1", status: "READY", startedAt: "t" } })) // startRun
+      .mockImplementation(async (url: unknown) => {
+        if (String(url).includes("/abort")) return jsonResponse({ data: { id: "run_1", status: "ABORTED", startedAt: "t" } });
+        return jsonResponse({ data: { id: "run_1", status: "RUNNING", startedAt: "t" } }); // waitForRun polling, never terminal
+      });
+
+    const client = new ApifyClient("test-token");
+    const result = await client.runActorAndGetItems("crawlerbros/aliexpress-scraper", {}, { pollIntervalMs: 1, maxWaitMs: 5 });
+
+    expect(result.run.status).toBe("TIMED-OUT");
+    const abortCall = fetchMock.mock.calls.find((c) => String(c[0]).includes("/abort"));
+    expect(abortCall).toBeDefined();
+  });
+
   it("does not retry on a 4xx client error", async () => {
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockResolvedValue(new Response("bad token", { status: 401 }));

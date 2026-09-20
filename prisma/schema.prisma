@@ -483,13 +483,27 @@ model ApifyCall {
   researchRunId    String?
   researchRun      ResearchRun?   @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
   actorId          String
+  // Adapter id that made this call, e.g. "aliexpress-tortuga",
+  // "aliexpress-crawlerbros", "google-shopping-apify" — lets the same
+  // actorId be attributed to a specific provider implementation.
+  provider         String?
   purpose          String // "discovery" | "market_enrichment"
+  // The search term(s) this call was for. A batched call (multiple keywords
+  // in one Actor run) stores them comma-joined.
+  keyword          String?
+  // The maxItems cap we requested for this call, for reconciling against
+  // itemCount and computing real cost-per-item after the fact.
+  requestedLimit   Int?
   apifyRunId       String         @unique
   datasetId        String?
   status           ApifyRunStatus @default(READY)
   itemCount        Int            @default(0)
   estimatedCostUsd Decimal
   actualCostUsd    Decimal?
+  // Wall-clock time this call took (start-run through dataset fetch),
+  // measured by us — independent of whether Apify reports its own
+  // startedAt/finishedAt on an aborted or timed-out run.
+  durationMs       Int?
   errorMessage     String?
   startedAt        DateTime       @default(now())
   finishedAt       DateTime?

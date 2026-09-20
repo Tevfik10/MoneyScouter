@@ -56,13 +56,17 @@ function mapApifyStatus(status: string): ApifyRunStatus {
 export interface ApifyCallRecord {
   researchRunId?: string;
   actorId: string;
+  provider?: string;
   purpose: string;
+  keyword?: string;
+  requestedLimit?: number;
   apifyRunId: string;
   datasetId?: string;
   status: ApifyRunStatus;
   itemCount: number;
   estimatedCostUsd: number;
   actualCostUsd: number;
+  durationMs?: number;
   errorMessage?: string;
 }
 
@@ -73,7 +77,11 @@ export interface ApifyCostStore {
 
 export interface ApifyActorCallParams {
   actorId: string;
+  /** Adapter id making this call, e.g. "aliexpress-tortuga" — recorded for observability. */
+  provider?: string;
   purpose: string;
+  /** Search term(s) this call is for, for observability — comma-joined if batched. */
+  keyword?: string;
   input: Record<string, unknown>;
   /** Hard cap on items for this call — also what the pre-run cost estimate is based on. */
   maxItems: number;
@@ -111,10 +119,12 @@ export class ApifyCostController {
       throw new ApifyBudgetExceededError(wouldTotalUsd, this.budget.hardLimitUsd);
     }
 
+    const callStartedAt = Date.now();
     const result = await this.client.runActorAndGetItems<T>(params.actorId, params.input, {
       ...params.opts,
       maxItems: params.maxItems,
     });
+    const durationMs = Date.now() - callStartedAt;
 
     const actualCostUsd = result.run.usageTotalUsd ?? estimatedCostUsd;
     const status = mapApifyStatus(result.run.status);
@@ -122,13 +132,17 @@ export class ApifyCostController {
     await this.store.recordCall({
       researchRunId: params.researchRunId,
       actorId: params.actorId,
+      provider: params.provider,
       purpose: params.purpose,
+      keyword: params.keyword,
+      requestedLimit: params.maxItems,
       apifyRunId: result.run.runId,
       datasetId: result.run.defaultDatasetId ?? undefined,
       status,
       itemCount: result.items.length,
       estimatedCostUsd,
       actualCostUsd,
+      durationMs,
       errorMessage:
         status !== ApifyRunStatus.SUCCEEDED ? `Run ended with status ${result.run.status}` : undefined,
     });

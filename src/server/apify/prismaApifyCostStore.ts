@@ -20,13 +20,17 @@ export class PrismaApifyCostStore implements ApifyCostStore {
       data: {
         researchRunId: entry.researchRunId,
         actorId: entry.actorId,
+        provider: entry.provider,
         purpose: entry.purpose,
+        keyword: entry.keyword,
+        requestedLimit: entry.requestedLimit,
         apifyRunId: entry.apifyRunId,
         datasetId: entry.datasetId,
         status: entry.status,
         itemCount: entry.itemCount,
         estimatedCostUsd: entry.estimatedCostUsd,
         actualCostUsd: entry.actualCostUsd,
+        durationMs: entry.durationMs,
         errorMessage: entry.errorMessage,
       },
     });

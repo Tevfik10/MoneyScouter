@@ -25,11 +25,15 @@ export default async function CostsPage() {
       <div className="space-y-6 p-6">
         <div>
           <h2 className="mb-2 text-sm font-medium text-muted-foreground">Apify (real discovery/enrichment)</h2>
+          <p className="mb-2 text-[11px] text-muted-foreground">
+            Every figure below is <strong>actual</strong> Apify spend (from each run&apos;s reported cost), never the
+            pre-run estimate — the estimate is only used to check a call against budget before it runs.
+          </p>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="Today" value={`${formatUsd(apifyBudget.spentTodayUsd)} / ${formatUsd(apifyBudget.dailyTargetUsd)}`} sub={`Hard limit ${formatUsd(apifyBudget.hardLimitUsd)}`} />
-            <StatCard label="All-time Apify spend" value={formatUsd(apifyOverview.totalSpendUsd)} />
+            <StatCard label="Today (actual)" value={`${formatUsd(apifyBudget.spentTodayUsd)} / ${formatUsd(apifyBudget.dailyTargetUsd)}`} sub={`Hard limit ${formatUsd(apifyBudget.hardLimitUsd)}`} />
+            <StatCard label="All-time Apify spend (actual)" value={formatUsd(apifyOverview.totalSpendUsd)} />
             <StatCard label="Apify calls made" value={formatNumber(apifyOverview.totalCalls)} />
-            <StatCard label="Spend by purpose" value={apifyOverview.byPurpose.map((p) => `${p.purpose}: ${formatUsd(Number(p._sum.actualCostUsd ?? 0))}`).join(" · ") || "—"} />
+            <StatCard label="Spend by purpose (actual)" value={apifyOverview.byPurpose.map((p) => `${p.purpose}: ${formatUsd(Number(p._sum.actualCostUsd ?? 0))}`).join(" · ") || "—"} />
           </div>
         </div>
 
@@ -101,6 +105,68 @@ export default async function CostsPage() {
 
         <Card>
           <CardHeader>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Recent Apify calls</CardTitle>
+            <p className="text-[11px] text-muted-foreground">
+              One row per Actor run we started — the full detail behind every dollar above.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Started</TableHead>
+                  <TableHead>Provider</TableHead>
+                  <TableHead>Purpose</TableHead>
+                  <TableHead>Keyword/query</TableHead>
+                  <TableHead className="text-right">Requested</TableHead>
+                  <TableHead className="text-right">Returned</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Duration</TableHead>
+                  <TableHead className="text-right">Est. cost</TableHead>
+                  <TableHead className="text-right">Actual cost</TableHead>
+                  <TableHead>Run / dataset</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {apifyOverview.recentCalls.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                      No Apify calls yet.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {apifyOverview.recentCalls.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(c.startedAt)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{c.provider ?? c.actorId}</TableCell>
+                    <TableCell>{c.purpose}</TableCell>
+                    <TableCell className="max-w-[220px] truncate" title={c.keyword ?? undefined}>
+                      {c.keyword ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{c.requestedLimit ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNumber(c.itemCount)}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{c.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {c.durationMs != null ? `${(c.durationMs / 1000).toFixed(1)}s` : "—"}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{formatUsdPrecise(Number(c.estimatedCostUsd))}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">
+                      {c.actualCostUsd != null ? formatUsdPrecise(Number(c.actualCostUsd)) : "—"}
+                    </TableCell>
+                    <TableCell className="max-w-[160px] truncate text-[11px] text-muted-foreground" title={`${c.apifyRunId} / ${c.datasetId ?? "—"}`}>
+                      {c.apifyRunId}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle className="text-sm font-medium text-muted-foreground">Recent runs</CardTitle>
           </CardHeader>
           <CardContent>
@@ -113,7 +179,7 @@ export default async function CostsPage() {
                   <TableHead className="text-right">Deep researched</TableHead>
                   <TableHead className="text-right">High potential</TableHead>
                   <TableHead className="text-right">AI spend</TableHead>
-                  <TableHead className="text-right">Apify spend</TableHead>
+                  <TableHead className="text-right">Apify spend (actual)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

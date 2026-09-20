@@ -6,7 +6,8 @@
 // anything, per master spec V1.1 section 13 ("if Apify cost cannot be
 // known before a run: use conservative caps on results/run sizes").
 export const APIFY_ACTOR_PRICE_PER_ITEM_USD: Record<string, number> = {
-  "crawlerbros/aliexpress-scraper": 0.003, // $3.00 / 1,000 results
+  "crawlerbros/aliexpress-scraper": 0.003, // $3.00 / 1,000 results — kept as the fallback/alternative provider
+  "tortuga/aliexpress-scraper": 0.002, // $2.00 / 1,000 results, batches multiple search terms in one run — default provider
   "chris_coussons/google-shopping-scraper": 0.003, // $3.00 / 1,000 results
 };
 

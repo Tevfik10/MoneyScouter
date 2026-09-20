@@ -9,10 +9,12 @@ import { getApifyBudgetSnapshot } from "@/server/queries/apify";
 import { getAllSettings } from "@/server/settings";
 import { formatNumber, formatUsd } from "@/lib/format";
 import { prisma } from "@/server/db";
-import { ALIEXPRESS_ACTOR_ID } from "@/server/providers/apify/aliexpress/provider";
+import { getAliExpressProvider, ALIEXPRESS_PROVIDERS } from "@/server/providers/apify/aliexpress";
 import { GOOGLE_SHOPPING_ACTOR_ID } from "@/server/providers/apify/googleShopping/provider";
 
 export const dynamic = "force-dynamic";
+// See src/app/research-runs/page.tsx for why this is set.
+export const maxDuration = 300;
 
 const EXAMPLE_QUERIES = [
   "Find products between €30 and €80 retail with at least €20 estimated margin.",
@@ -32,6 +34,7 @@ export default async function DiscoverPage() {
     }),
   ]);
   const hasApifyToken = !!process.env.APIFY_API_TOKEN;
+  const activeAliExpressProvider = getAliExpressProvider(settings.scoutConfig.aliexpressProviderId);
 
   return (
     <div>
@@ -67,17 +70,30 @@ export default async function DiscoverPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Real providers (Apify)</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex items-center justify-between rounded-md border border-border p-3">
-              <div>
-                <div className="font-medium">{ALIEXPRESS_ACTOR_ID}</div>
-                <div className="text-xs text-muted-foreground">
-                  Discovery — real AliExpress search results, normalized into products, deduplicated by fingerprint.
+            {Object.values(ALIEXPRESS_PROVIDERS).map((provider) => (
+              <div key={provider.id} className="flex items-center justify-between rounded-md border border-border p-3">
+                <div>
+                  <div className="font-medium">
+                    {provider.actorId}
+                    {provider.id === activeAliExpressProvider.id && (
+                      <Badge variant="secondary" className="ml-2 font-normal">
+                        active
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Discovery — real AliExpress search results, normalized into products, deduplicated by
+                    fingerprint.{" "}
+                    {provider.supportsBatching
+                      ? "Batches all configured keywords into a single Actor run."
+                      : "One Actor run per keyword (no batching support)."}
+                  </div>
                 </div>
+                <Badge variant={hasApifyToken ? "default" : "outline"}>
+                  {hasApifyToken ? "configured" : "APIFY_API_TOKEN missing"}
+                </Badge>
               </div>
-              <Badge variant={hasApifyToken ? "default" : "outline"}>
-                {hasApifyToken ? "configured" : "APIFY_API_TOKEN missing"}
-              </Badge>
-            </div>
+            ))}
             <div className="flex items-center justify-between rounded-md border border-border p-3">
               <div>
                 <div className="font-medium">{GOOGLE_SHOPPING_ACTOR_ID}</div>

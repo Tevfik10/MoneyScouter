@@ -7,6 +7,12 @@ import { formatDateTime, formatEurPrecise, formatNumber, formatUsdPrecise } from
 import { prisma } from "@/server/db";
 
 export const dynamic = "force-dynamic";
+// Best-effort headroom for the "Run Scout" server action invoked from this
+// page — actual ceiling still depends on the hosting plan's function
+// duration limit. The pipeline has its own internal time-budget guard (see
+// runScoutReal) that self-terminates well before this, so a run finalizes
+// itself instead of being killed mid-flight and left stuck RUNNING.
+export const maxDuration = 300;
 
 export default async function ResearchRunsPage() {
   const runs = await prisma.researchRun.findMany({ orderBy: { startedAt: "desc" }, take: 50 });
@@ -33,7 +39,7 @@ export default async function ResearchRunsPage() {
                   <TableHead className="text-right">Shortlisted</TableHead>
                   <TableHead className="text-right">Market-enriched</TableHead>
                   <TableHead className="text-right">High potential</TableHead>
-                  <TableHead className="text-right">Spend</TableHead>
+                  <TableHead className="text-right">Spend (actual)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
