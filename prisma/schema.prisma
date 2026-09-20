@@ -12,7 +12,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // Pooled connection (e.g. Supabase Transaction Pooler / PgBouncer) for
   // normal query traffic from serverless functions.
   url       = env("DATABASE_URL")
@@ -56,6 +56,24 @@ enum RunStatus {
   BUDGET_STOPPED
 }
 
+// LLM_MOCK: the V1 pipeline (mock discovery + mock LLM agents), kept for
+// demo/dev use without spending anything real.
+// APIFY_DETERMINISTIC: V1.1 — real Apify discovery/enrichment, zero LLM
+// calls, rule-based Judge. See docs/ARCHITECTURE_V1_1.md.
+enum RunMode {
+  LLM_MOCK
+  APIFY_DETERMINISTIC
+}
+
+enum ApifyRunStatus {
+  READY
+  RUNNING
+  SUCCEEDED
+  FAILED
+  TIMED_OUT
+  ABORTED
+}
+
 enum DecisionStage {
   FILTER
   ENRICHMENT
@@ -83,6 +101,14 @@ enum AgentType {
   RISK
   SKEPTIC
   JUDGE
+  // Added for the Apify/deterministic pipeline (V1.1). SCOUT/DEDUP/FILTER
+  // are batch-level "code agents" with no single product — tracked via
+  // PipelineStageRun rather than AgentResult. TREND replaces MARKET in
+  // that mode (measurable signals only, no LLM demand interpretation).
+  SCOUT
+  DEDUP
+  FILTER
+  TREND
 }
 
 enum ModelTier {
@@ -152,7 +178,7 @@ model Product {
 }
 
 model Supplier {
-  id         String  @id @default(cuid())
+  id         String   @id @default(cuid())
   name       String
   platform   String // "aliexpress" | "alibaba" | "cjdropshipping" | "other"
   externalId String?
@@ -173,17 +199,19 @@ model ProductSource {
   supplier          Supplier @relation(fields: [supplierId], references: [id])
   supplierProductId String
 
-  url           String?
-  price         Decimal
-  currency      String   @default("EUR")
-  shippingCost  Decimal?
-  shippingDays  Int?
-  moq           Int?
-  reviewCount   Int?
-  orderCount    Int?
-  rating        Float?
-  weightGrams   Int?
-  raw           Json?
+  url             String?
+  price           Decimal
+  currency        String   @default("EUR")
+  oldPrice        Decimal? // pre-discount list price, when the source reports one
+  discountPercent Float?
+  shippingCost    Decimal?
+  shippingDays    Int?
+  moq             Int?
+  reviewCount     Int?
+  orderCount      Int?
+  rating          Float?
+  weightGrams     Int?
+  raw             Json? // full raw item as returned by the provider, for fields we don't have a dedicated column for
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -222,10 +250,12 @@ model PriceHistory {
 // ---------------------------------------------------------------------------
 
 model ResearchRun {
-  id        String    @id @default(cuid())
-  status    RunStatus @default(PENDING)
-  trigger   String    @default("manual") // "manual" | "scheduled"
-  startedAt DateTime  @default(now())
+  id         String    @id @default(cuid())
+  status     RunStatus @default(PENDING)
+  mode       RunMode   @default(LLM_MOCK)
+  trigger    String    @default("manual") // "manual" | "scheduled"
+  testMode   Boolean   @default(false)
+  startedAt  DateTime  @default(now())
   finishedAt DateTime?
 
   discoveredCount     Int @default(0)
@@ -235,21 +265,34 @@ model ResearchRun {
   shortlistedCount    Int @default(0)
   deepResearchedCount Int @default(0)
   highPotentialCount  Int @default(0)
+  marketEnrichedCount Int @default(0)
 
+  // AI (LLM_MOCK mode) budget — see docs/ARCHITECTURE.md section E.
   budgetEur    Decimal
   hardLimitEur Decimal
   spendEur     Decimal @default(0)
-  stopReason   String?
 
-  decisions    Decision[]
-  agentResults AgentResult[]
-  scores       Score[]
-  aiCalls      AiCall[]
+  // Apify (APIFY_DETERMINISTIC mode) budget — tracked separately from the
+  // AI budget above, per the V1.1 spec's "separate from AI budget".
+  apifyBudgetUsd    Decimal?
+  apifyHardLimitUsd Decimal?
+  apifySpendUsd     Decimal  @default(0)
+
+  stopReason String?
+
+  decisions      Decision[]
+  agentResults   AgentResult[]
+  scores         Score[]
+  aiCalls        AiCall[]
+  apifyCalls     ApifyCall[]
+  searchRuns     SearchRun[]
+  pipelineStages PipelineStageRun[]
 
   createdAt DateTime @default(now())
 
   @@index([status])
   @@index([startedAt])
+  @@index([mode])
 }
 
 // Content-hash keyed cache so unchanged products are never re-billed by the
@@ -267,20 +310,20 @@ model ResearchCache {
 }
 
 model AgentResult {
-  id             String            @id @default(cuid())
-  researchRunId  String
-  researchRun    ResearchRun       @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
-  productId      String
-  product        Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
-  agentType      AgentType
-  status         AgentResultStatus @default(COMPLETED)
-  summary        String
-  findings       Json
-  modelTier      ModelTier
+  id              String            @id @default(cuid())
+  researchRunId   String
+  researchRun     ResearchRun       @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  agentType       AgentType
+  status          AgentResultStatus @default(COMPLETED)
+  summary         String
+  findings        Json
+  modelTier       ModelTier
   promptVersionId String?
-  promptVersion  PromptVersion?    @relation(fields: [promptVersionId], references: [id])
-  startedAt      DateTime          @default(now())
-  finishedAt     DateTime?
+  promptVersion   PromptVersion?    @relation(fields: [promptVersionId], references: [id])
+  startedAt       DateTime          @default(now())
+  finishedAt      DateTime?
 
   @@unique([researchRunId, productId, agentType])
   @@index([productId])
@@ -294,16 +337,23 @@ model Score {
   product       Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   // Rubric, each /10 — see docs/ARCHITECTURE.md section on Judge scoring.
-  demand          Int
-  trend           Int
-  margin          Int
-  competition     Int
-  brandability    Int
-  marketingAngles Int
-  supplierQuality Int
-  shipping        Int
-  operationalEase Int
-  risk            Int
+  demand                 Int
+  trend                  Int
+  margin                 Int
+  competition            Int
+  // Brandability/marketing angles only apply in LLM_MOCK mode (Brand/Angle
+  // agents don't run in APIFY_DETERMINISTIC mode — no LLM to generate
+  // positioning or ad copy). Null in deterministic-mode Score rows.
+  brandability           Int?
+  marketingAngles        Int?
+  supplierQuality        Int
+  shipping               Int
+  operationalEase        Int
+  risk                   Int
+  // APIFY_DETERMINISTIC mode only: how much room between purchase cost and
+  // observed real market price (from Google Shopping enrichment). Null in
+  // LLM_MOCK mode, which has no real market price data to compare against.
+  marketPriceOpportunity Int?
 
   moneyScore  Int // 0-100, weighted combination of the above
   verdict     Verdict
@@ -345,22 +395,22 @@ model Decision {
 // ---------------------------------------------------------------------------
 
 model AiCall {
-  id              String         @id @default(cuid())
-  researchRunId   String?
-  researchRun     ResearchRun?   @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
-  productId       String?
-  product         Product?       @relation(fields: [productId], references: [id])
-  agentType       AgentType?
-  provider        String
-  model           String
-  tier            ModelTier
-  taskType        TaskType
-  inputTokens     Int
-  outputTokens    Int
+  id               String         @id @default(cuid())
+  researchRunId    String?
+  researchRun      ResearchRun?   @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  productId        String?
+  product          Product?       @relation(fields: [productId], references: [id])
+  agentType        AgentType?
+  provider         String
+  model            String
+  tier             ModelTier
+  taskType         TaskType
+  inputTokens      Int
+  outputTokens     Int
   estimatedCostEur Decimal
-  promptVersionId String?
-  promptVersion   PromptVersion? @relation(fields: [promptVersionId], references: [id])
-  createdAt       DateTime       @default(now())
+  promptVersionId  String?
+  promptVersion    PromptVersion? @relation(fields: [promptVersionId], references: [id])
+  createdAt        DateTime       @default(now())
 
   @@index([createdAt])
   @@index([researchRunId])
@@ -370,6 +420,101 @@ model Setting {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Apify data layer (V1.1) — see docs/ARCHITECTURE_V1_1.md
+// ---------------------------------------------------------------------------
+
+// Configurable search-term system (master spec V1.1 section 4). Editable
+// from Settings; a Scout run selects a configurable number of enabled
+// keywords rather than searching one static term.
+model SearchTopic {
+  id        String   @id @default(cuid())
+  name      String   @unique // "home", "kitchen", "travel", ...
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  keywords SearchKeyword[]
+}
+
+model SearchKeyword {
+  id         String      @id @default(cuid())
+  topicId    String
+  topic      SearchTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  keyword    String
+  enabled    Boolean     @default(true)
+  timesUsed  Int         @default(0)
+  lastUsedAt DateTime?
+  createdAt  DateTime    @default(now())
+
+  searchRuns SearchRun[]
+
+  @@unique([topicId, keyword])
+}
+
+// Which keywords were actually searched in a given ResearchRun, and how
+// many raw items each one returned — part of the audit trail alongside
+// Decision.
+model SearchRun {
+  id            String        @id @default(cuid())
+  researchRunId String
+  researchRun   ResearchRun   @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  keywordId     String
+  keyword       SearchKeyword @relation(fields: [keywordId], references: [id])
+  itemsReturned Int           @default(0)
+  createdAt     DateTime      @default(now())
+
+  @@index([researchRunId])
+}
+
+// One row per Apify Actor run this app started — the Apify equivalent of
+// AiCall, feeding the separate Apify Cost Controller (docs/ARCHITECTURE_V1_1.md
+// section 13). estimatedCostUsd is a conservative pre-run cap-based
+// estimate; actualCostUsd is filled in from the run object's
+// `usageTotalUsd` once the run finishes, where Apify reports it.
+model ApifyCall {
+  id               String         @id @default(cuid())
+  researchRunId    String?
+  researchRun      ResearchRun?   @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  actorId          String
+  purpose          String // "discovery" | "market_enrichment"
+  apifyRunId       String         @unique
+  datasetId        String?
+  status           ApifyRunStatus @default(READY)
+  itemCount        Int            @default(0)
+  estimatedCostUsd Decimal
+  actualCostUsd    Decimal?
+  errorMessage     String?
+  startedAt        DateTime       @default(now())
+  finishedAt       DateTime?
+
+  @@index([startedAt])
+  @@index([researchRunId])
+}
+
+// Batch-level "code agent" execution tracking for the deterministic
+// pipeline (Scout/Dedup/Filter/Supplier/Competitor/Margin/Trend/Risk/Judge)
+// — these operate on a whole run, not one product, so they don't fit
+// AgentResult's per-product shape. Powers the Agents page's real
+// status/last-run/processed/rejected/duration/cost/errors view, per V1.1
+// spec section 12: "Do NOT fake agent activity."
+model PipelineStageRun {
+  id             String            @id @default(cuid())
+  researchRunId  String
+  researchRun    ResearchRun       @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  stage          AgentType
+  status         AgentResultStatus @default(COMPLETED)
+  dataSource     String? // e.g. "apify:crawlerbros/aliexpress-scraper"
+  itemsProcessed Int               @default(0)
+  itemsRejected  Int               @default(0)
+  costUsd        Decimal?
+  errorMessage   String?
+  startedAt      DateTime          @default(now())
+  finishedAt     DateTime?
+
+  @@unique([researchRunId, stage])
+  @@index([researchRunId])
 }
 
 model PromptVersion {
@@ -411,16 +556,20 @@ model Competitor {
 }
 
 model CompetitorSighting {
-  id            String     @id @default(cuid())
-  competitorId  String
-  competitor    Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
-  productId     String
-  product       Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
-  researchRunId String?
-  price         Decimal?
-  positioning   String?
-  url           String?
-  createdAt     DateTime   @default(now())
+  id              String     @id @default(cuid())
+  competitorId    String
+  competitor      Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  researchRunId   String?
+  price           Decimal?
+  positioning     String?
+  url             String?
+  // How confident the (fuzzy) title match is that this sighting is really
+  // the same product, 0-1. Never presented as certain — see
+  // docs/ARCHITECTURE_V1_1.md section 8.
+  matchConfidence Float?
+  createdAt       DateTime   @default(now())
 
   @@index([productId])
 }
@@ -428,10 +577,10 @@ model CompetitorSighting {
 // Placeholder for the future Validation Lab (section 17). No automation is
 // wired up in V1 — this exists so the interface/shape is ready.
 model ValidationTest {
-  id                 String            @id @default(cuid())
+  id                 String           @id @default(cuid())
   productId          String
-  product            Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
-  status             ValidationStatus  @default(DRAFT)
+  product            Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  status             ValidationStatus @default(DRAFT)
   brandName          String?
   positioning        String?
   usp                String?
@@ -446,6 +595,6 @@ model ValidationTest {
   adConcepts         Json?
   imagePrompts       Json?
   suggestedBudgetEur Decimal?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 }
