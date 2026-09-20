@@ -3,6 +3,10 @@ import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { MetricCard } from "@/components/metric-card";
+import { CostDisplay } from "@/components/cost-display";
+import { RunStatusBadge } from "@/components/verdict-badge";
 import { formatEur, formatEurPrecise, formatUsd, formatUsdPrecise, formatDateTime, formatNumber } from "@/lib/format";
 import { getApifyCostOverview, getCostOverview } from "@/server/queries/costs";
 import { getBudgetSnapshot, getMonthSpend } from "@/server/queries/dashboard";
@@ -21,204 +25,236 @@ export default async function CostsPage() {
 
   return (
     <div>
-      <PageHeader title="Costs" description="Every dollar/euro spent, traced back to run, agent, actor and model tier." />
+      <PageHeader title="Kosten" description="Elke euro en dollar herleidbaar naar zoekronde, agent en databron." />
       <div className="space-y-6 p-6">
-        <div>
-          <h2 className="mb-2 text-sm font-medium text-muted-foreground">Apify (real discovery/enrichment)</h2>
-          <p className="mb-2 text-[11px] text-muted-foreground">
-            Every figure below is <strong>actual</strong> Apify spend (from each run&apos;s reported cost), never the
-            pre-run estimate — the estimate is only used to check a call against budget before it runs.
-          </p>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="Today (actual)" value={`${formatUsd(apifyBudget.spentTodayUsd)} / ${formatUsd(apifyBudget.dailyTargetUsd)}`} sub={`Hard limit ${formatUsd(apifyBudget.hardLimitUsd)}`} />
-            <StatCard label="All-time Apify spend (actual)" value={formatUsd(apifyOverview.totalSpendUsd)} />
-            <StatCard label="Apify calls made" value={formatNumber(apifyOverview.totalCalls)} />
-            <StatCard label="Spend by purpose (actual)" value={apifyOverview.byPurpose.map((p) => `${p.purpose}: ${formatUsd(Number(p._sum.actualCostUsd ?? 0))}`).join(" · ") || "—"} />
-          </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard
+            label="Apify vandaag (werkelijk)"
+            value={formatUsd(apifyBudget.spentTodayUsd)}
+            sub={`van max. ${formatUsd(apifyBudget.hardLimitUsd)}`}
+            tone="success"
+          />
+          <MetricCard
+            label="AI vandaag (geschat)"
+            value={formatEur(budget.spentTodayEur)}
+            sub={`van max. ${formatEur(budget.hardLimitEur)}`}
+            tone="default"
+          />
+          <MetricCard label="AI deze maand (geschat)" value={formatEur(monthSpend)} tone="default" />
+          <MetricCard label="Apify-aanroepen totaal" value={formatNumber(apifyOverview.totalCalls)} tone="info" />
         </div>
 
-        <div>
-          <h2 className="mb-2 text-sm font-medium text-muted-foreground">AI (mock/demo pipeline)</h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="Today" value={`${formatEur(budget.spentTodayEur)} / ${formatEur(budget.dailyTargetEur)}`} sub={`Hard limit ${formatEur(budget.hardLimitEur)}`} />
-            <StatCard label="This month" value={formatEur(monthSpend)} />
-            <StatCard label="Cost per deep-researched product" value={formatEur(overview.costPerShortlisted)} />
-            <StatCard label="Cost per high-potential opportunity" value={formatEur(overview.costPerHighPotential)} />
-          </div>
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">Spend by model tier</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Tier</TableHead>
-                    <TableHead className="text-right">Calls</TableHead>
-                    <TableHead className="text-right">Spend</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {overview.byTier.map((t) => (
-                    <TableRow key={t.tier}>
-                      <TableCell>
-                        <Badge variant="outline">{t.tier}</Badge>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{formatNumber(t._count._all)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatEurPrecise(Number(t._sum.estimatedCostEur ?? 0))}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">Spend by agent</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Agent</TableHead>
-                    <TableHead className="text-right">Calls</TableHead>
-                    <TableHead className="text-right">Spend</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {overview.byAgent.map((a) => (
-                    <TableRow key={a.agentType}>
-                      <TableCell>{a.agentType}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatNumber(a._count._all)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatEurPrecise(Number(a._sum.estimatedCostEur ?? 0))}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Card>
+        <Card className="card-elevated">
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">Recent Apify calls</CardTitle>
-            <p className="text-[11px] text-muted-foreground">
-              One row per Actor run we started — the full detail behind every dollar above.
+            <CardTitle className="text-sm font-medium text-muted-foreground">Apify (echte productdata)</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Onderstaande bedragen zijn altijd <strong>werkelijke</strong> Apify-kosten (het door de databron
+              gerapporteerde bedrag) — nooit de schatting vooraf. Die schatting wordt alleen gebruikt om een
+              zoekactie vóóraf tegen het budget te toetsen.
             </p>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Provider</TableHead>
-                  <TableHead>Purpose</TableHead>
-                  <TableHead>Keyword/query</TableHead>
-                  <TableHead className="text-right">Requested</TableHead>
-                  <TableHead className="text-right">Returned</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Duration</TableHead>
-                  <TableHead className="text-right">Est. cost</TableHead>
-                  <TableHead className="text-right">Actual cost</TableHead>
-                  <TableHead>Run / dataset</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {apifyOverview.recentCalls.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
-                      No Apify calls yet.
-                    </TableCell>
-                  </TableRow>
-                )}
-                {apifyOverview.recentCalls.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="whitespace-nowrap">{formatDateTime(c.startedAt)}</TableCell>
-                    <TableCell className="whitespace-nowrap">{c.provider ?? c.actorId}</TableCell>
-                    <TableCell>{c.purpose}</TableCell>
-                    <TableCell className="max-w-[220px] truncate" title={c.keyword ?? undefined}>
-                      {c.keyword ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{c.requestedLimit ?? "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatNumber(c.itemCount)}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{c.status}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {c.durationMs != null ? `${(c.durationMs / 1000).toFixed(1)}s` : "—"}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{formatUsdPrecise(Number(c.estimatedCostUsd))}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">
-                      {c.actualCostUsd != null ? formatUsdPrecise(Number(c.actualCostUsd)) : "—"}
-                    </TableCell>
-                    <TableCell className="max-w-[160px] truncate text-[11px] text-muted-foreground" title={`${c.apifyRunId} / ${c.datasetId ?? "—"}`}>
-                      {c.apifyRunId}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <div className="text-xs text-muted-foreground">Vandaag</div>
+                <CostDisplay value={`${formatUsd(apifyBudget.spentTodayUsd)} / ${formatUsd(apifyBudget.dailyTargetUsd)}`} kind="actual" size="lg" />
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Totaal (alle tijd)</div>
+                <CostDisplay value={formatUsd(apifyOverview.totalSpendUsd)} kind="actual" size="lg" />
+              </div>
+            </div>
+            <div className="border-t border-border pt-3 text-xs text-muted-foreground">
+              Per doel: {apifyOverview.byPurpose.map((p) => `${p.purpose}: ${formatUsd(Number(p._sum.actualCostUsd ?? 0))}`).join(" · ") || "—"}
+            </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="card-elevated">
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">Recent runs</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">AI (demo-pipeline)</CardTitle>
           </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Mode</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Deep researched</TableHead>
-                  <TableHead className="text-right">High potential</TableHead>
-                  <TableHead className="text-right">AI spend</TableHead>
-                  <TableHead className="text-right">Apify spend (actual)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {overview.byRun.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell>
-                      <Link href="/research-runs" className="hover:underline">
-                        {formatDateTime(r.startedAt)}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{r.mode === "APIFY_DETERMINISTIC" ? "Apify" : "Mock"}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{r.status}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{r.deepResearchedCount}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.highPotentialCount}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatEurPrecise(r.spendEur)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatUsdPrecise(r.apifySpendUsd)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+              <div className="text-xs text-muted-foreground">Kosten per uitgebreid onderzocht product</div>
+              <CostDisplay value={formatEur(overview.costPerShortlisted)} kind="estimated" />
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">Kosten per kans met hoge potentie</div>
+              <CostDisplay value={formatEur(overview.costPerHighPotential)} kind="estimated" />
+            </div>
           </CardContent>
         </Card>
+
+        <Accordion multiple>
+          <AccordionItem value="technical">
+            <AccordionTrigger className="text-sm font-medium text-muted-foreground">Technische details</AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-6 pt-2">
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-sm font-medium text-muted-foreground">Kosten per modelniveau (AI)</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Niveau</TableHead>
+                            <TableHead className="text-right">Aanroepen</TableHead>
+                            <TableHead className="text-right">Kosten (geschat)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {overview.byTier.map((t) => (
+                            <TableRow key={t.tier}>
+                              <TableCell>
+                                <Badge variant="outline">{t.tier}</Badge>
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">{formatNumber(t._count._all)}</TableCell>
+                              <TableCell className="text-right tabular-nums">{formatEurPrecise(Number(t._sum.estimatedCostEur ?? 0))}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-sm font-medium text-muted-foreground">Kosten per agent (AI)</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Agent</TableHead>
+                            <TableHead className="text-right">Aanroepen</TableHead>
+                            <TableHead className="text-right">Kosten (geschat)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {overview.byAgent.map((a) => (
+                            <TableRow key={a.agentType}>
+                              <TableCell>{a.agentType}</TableCell>
+                              <TableCell className="text-right tabular-nums">{formatNumber(a._count._all)}</TableCell>
+                              <TableCell className="text-right tabular-nums">{formatEurPrecise(Number(a._sum.estimatedCostEur ?? 0))}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Recente Apify-aanroepen</CardTitle>
+                    <p className="text-[11px] text-muted-foreground">
+                      Eén regel per databron-aanroep — het volledige detail achter elk bedrag hierboven.
+                    </p>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Gestart</TableHead>
+                          <TableHead>Bron</TableHead>
+                          <TableHead>Doel</TableHead>
+                          <TableHead>Zoekterm</TableHead>
+                          <TableHead className="text-right">Gevraagd</TableHead>
+                          <TableHead className="text-right">Ontvangen</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Duur</TableHead>
+                          <TableHead className="text-right">Geschat</TableHead>
+                          <TableHead className="text-right">Werkelijk</TableHead>
+                          <TableHead>Run / dataset</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {apifyOverview.recentCalls.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                              Nog geen Apify-aanroepen.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        {apifyOverview.recentCalls.map((c) => (
+                          <TableRow key={c.id}>
+                            <TableCell className="whitespace-nowrap">{formatDateTime(c.startedAt)}</TableCell>
+                            <TableCell className="whitespace-nowrap">{c.provider ?? c.actorId}</TableCell>
+                            <TableCell>{c.purpose}</TableCell>
+                            <TableCell className="max-w-[220px] truncate" title={c.keyword ?? undefined}>
+                              {c.keyword ?? "—"}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{c.requestedLimit ?? "—"}</TableCell>
+                            <TableCell className="text-right tabular-nums">{formatNumber(c.itemCount)}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{c.status}</Badge>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {c.durationMs != null ? `${(c.durationMs / 1000).toFixed(1)}s` : "—"}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{formatUsdPrecise(Number(c.estimatedCostUsd))}</TableCell>
+                            <TableCell className="text-right tabular-nums font-medium">
+                              {c.actualCostUsd != null ? formatUsdPrecise(Number(c.actualCostUsd)) : "—"}
+                            </TableCell>
+                            <TableCell className="max-w-[160px] truncate text-[11px] text-muted-foreground" title={`${c.apifyRunId} / ${c.datasetId ?? "—"}`}>
+                              {c.apifyRunId}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Recente zoekrondes</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Gestart</TableHead>
+                          <TableHead>Modus</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Uitgebreid onderzocht</TableHead>
+                          <TableHead className="text-right">Hoge potentie</TableHead>
+                          <TableHead className="text-right">AI (geschat)</TableHead>
+                          <TableHead className="text-right">Apify (werkelijk)</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {overview.byRun.map((r) => (
+                          <TableRow key={r.id}>
+                            <TableCell>
+                              <Link href="/research-runs" className="hover:underline">
+                                {formatDateTime(r.startedAt)}
+                              </Link>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="secondary">{r.mode === "APIFY_DETERMINISTIC" ? "Apify" : "Demo"}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              <RunStatusBadge status={r.status} />
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{r.deepResearchedCount}</TableCell>
+                            <TableCell className="text-right tabular-nums">{r.highPotentialCount}</TableCell>
+                            <TableCell className="text-right tabular-nums">{formatEurPrecise(r.spendEur)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{formatUsdPrecise(r.apifySpendUsd)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       </div>
     </div>
-  );
-}
-
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <Card>
-      <CardContent className="py-4">
-        <div className="text-xs text-muted-foreground">{label}</div>
-        <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
-        {sub && <div className="mt-0.5 text-[11px] text-muted-foreground">{sub}</div>}
-      </CardContent>
-    </Card>
   );
 }

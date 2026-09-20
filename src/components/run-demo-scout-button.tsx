@@ -19,18 +19,18 @@ export function RunDemoScoutButton() {
       disabled={isPending}
       onClick={() => {
         startTransition(async () => {
-          toast.info("Demo run started… mock discovery + mock LLM agents, no real spend.");
+          toast.info("Demo-run gestart… nagebootste data, geen echte kosten.");
           try {
             await runDemoScoutAction();
-            toast.success("Demo run complete.");
+            toast.success("Demo-run voltooid.");
           } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Demo run failed.");
+            toast.error(err instanceof Error ? err.message : "Demo-run mislukt.");
           }
         });
       }}
     >
       {isPending ? <Loader2 className="size-4 animate-spin" /> : <FlaskConical className="size-4" />}
-      Run Demo (mock data)
+      Demo uitvoeren (nagebootste data)
     </Button>
   );
 }

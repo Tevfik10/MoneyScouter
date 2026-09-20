@@ -17,10 +17,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const EXAMPLE_QUERIES = [
-  "Find products between €30 and €80 retail with at least €20 estimated margin.",
-  "Only investigate fitness products tonight.",
-  "Why did you reject product 847?",
-  "Find products where Dutch competition is weak but US demand is established.",
+  "Zoek producten tussen €30 en €80 verkoopprijs met minimaal €20 geschatte marge.",
+  "Onderzoek vanavond alleen fitnessproducten.",
+  "Waarom is product 847 afgewezen?",
+  "Zoek producten met weinig Nederlandse concurrentie en aantoonbare vraag.",
 ];
 
 export default async function DiscoverPage() {
@@ -39,8 +39,8 @@ export default async function DiscoverPage() {
   return (
     <div>
       <PageHeader
-        title="Discover"
-        description="Providers scan for new commercial opportunities before anything is filtered or analyzed."
+        title="Ontdekken"
+        description="Providers scannen naar nieuwe commerciële kansen, voordat er iets gefilterd of geanalyseerd wordt."
         actions={
           <div className="flex items-center gap-2">
             <RunDemoScoutButton />
@@ -51,10 +51,10 @@ export default async function DiscoverPage() {
       <div className="space-y-6 p-6">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">Command bar (preview)</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Zoekbalk (preview)</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            <Input disabled placeholder="Ask MoneyScouter… (coming soon)" />
+            <Input disabled placeholder="Vraag iets aan MoneyScouter… (binnenkort beschikbaar)" />
             <div className="flex flex-wrap gap-1.5 pt-1">
               {EXAMPLE_QUERIES.map((q) => (
                 <Badge key={q} variant="secondary" className="font-normal">
@@ -67,7 +67,7 @@ export default async function DiscoverPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">Real providers (Apify)</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Echte databronnen (Apify)</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {Object.values(ALIEXPRESS_PROVIDERS).map((provider) => (
@@ -77,20 +77,19 @@ export default async function DiscoverPage() {
                     {provider.actorId}
                     {provider.id === activeAliExpressProvider.id && (
                       <Badge variant="secondary" className="ml-2 font-normal">
-                        active
+                        actief
                       </Badge>
                     )}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    Discovery — real AliExpress search results, normalized into products, deduplicated by
-                    fingerprint.{" "}
+                    Zoeken naar producten — echte AliExpress-zoekresultaten, omgezet naar producten en ontdubbeld.{" "}
                     {provider.supportsBatching
-                      ? "Batches all configured keywords into a single Actor run."
-                      : "One Actor run per keyword (no batching support)."}
+                      ? "Doorzoekt alle ingestelde zoektermen in één keer."
+                      : "Eén zoekactie per zoekterm (kan niet combineren)."}
                   </div>
                 </div>
                 <Badge variant={hasApifyToken ? "default" : "outline"}>
-                  {hasApifyToken ? "configured" : "APIFY_API_TOKEN missing"}
+                  {hasApifyToken ? "gekoppeld" : "Apify-koppeling ontbreekt"}
                 </Badge>
               </div>
             ))}
@@ -98,31 +97,32 @@ export default async function DiscoverPage() {
               <div>
                 <div className="font-medium">{GOOGLE_SHOPPING_ACTOR_ID}</div>
                 <div className="text-xs text-muted-foreground">
-                  Market enrichment — real competitor listings, fuzzy-matched. Only called on shortlisted products.
+                  Marktverrijking — echte concurrerende aanbiedingen, herkend op gelijkenis. Alleen gebruikt voor
+                  producten op de shortlist.
                 </div>
               </div>
               <Badge variant={hasApifyToken ? "default" : "outline"}>
-                {hasApifyToken ? "configured" : "APIFY_API_TOKEN missing"}
+                {hasApifyToken ? "gekoppeld" : "Apify-koppeling ontbreekt"}
               </Badge>
             </div>
             <div className="flex items-center justify-between rounded-md border border-border p-3">
               <div>
-                <div className="font-medium">mock</div>
+                <div className="font-medium">demo</div>
                 <div className="text-xs text-muted-foreground">
-                  Deterministic demo catalog, no network calls — used only by &ldquo;Run Demo&rdquo;.
+                  Nagebootste catalogus, geen netwerkverkeer — alleen gebruikt door &ldquo;Demo uitvoeren&rdquo;.
                 </div>
               </div>
-              <Badge variant="secondary">local dev / demo only</Badge>
+              <Badge variant="secondary">alleen lokaal / demo</Badge>
             </div>
             <p className="text-xs text-muted-foreground">
-              Apify budget today: {formatUsd(apifyBudget.spentTodayUsd)} / {formatUsd(apifyBudget.dailyTargetUsd)}{" "}
-              (hard limit {formatUsd(apifyBudget.hardLimitUsd)}). Test mode is{" "}
-              {settings.scoutConfig.testMode ? "on" : "off"} — configurable in Settings.
+              Apify-budget vandaag: {formatUsd(apifyBudget.spentTodayUsd)} / {formatUsd(apifyBudget.dailyTargetUsd)}{" "}
+              (maximaal {formatUsd(apifyBudget.hardLimitUsd)}). Testmodus staat{" "}
+              {settings.scoutConfig.testMode ? "aan" : "uit"} — in te stellen bij Instellingen.
             </p>
             {run && (
               <p className="text-xs text-muted-foreground">
-                Last run ({run.mode === "APIFY_DETERMINISTIC" ? "Apify" : "mock"}) discovered{" "}
-                {formatNumber(run.discoveredCount)} items.
+                Laatste zoekronde ({run.mode === "APIFY_DETERMINISTIC" ? "Apify" : "demo"}) vond{" "}
+                {formatNumber(run.discoveredCount)} producten.
               </p>
             )}
           </CardContent>
@@ -131,14 +131,14 @@ export default async function DiscoverPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Search topics ({topics.length})
+              Zoekonderwerpen ({topics.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2">
             {topics.length === 0 && (
               <p className="text-sm text-muted-foreground">
-                No search topics configured yet — they&apos;ll seed automatically on the next real run, or you can
-                seed them now from Settings.
+                Nog geen zoekonderwerpen ingesteld — deze worden automatisch aangemaakt bij de volgende zoekronde, of
+                stel ze nu al in bij Instellingen.
               </p>
             )}
             {topics.map((t) => (

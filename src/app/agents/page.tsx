@@ -2,32 +2,41 @@ import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime, formatEurPrecise, formatNumber, formatUsdPrecise } from "@/lib/format";
+import { AGENT_INFO_NL } from "@/lib/labels";
 import { prisma } from "@/server/db";
 
 export const dynamic = "force-dynamic";
 
-const REAL_AGENT_INFO: Record<string, { role: string; batch: boolean }> = {
-  SCOUT: { role: "Runs AliExpress discovery via Apify for the run's selected keywords.", batch: true },
-  DEDUP: { role: "Fingerprint lookup — never re-analyzes an unchanged, previously-seen product.", batch: true },
-  FILTER: { role: "Zero-AI rule engine: price/margin/rating/review/shipping thresholds.", batch: true },
-  SUPPLIER: { role: "Compares suppliers on price, rating, shipping and MOQ. Pure calculation.", batch: false },
-  COMPETITOR: { role: "Fuzzy-matches shortlisted products against real Google Shopping listings.", batch: false },
-  MARGIN: { role: "Calculates bad/base/good unit-economics scenarios. Pure calculation.", batch: false },
-  TREND: { role: "Score from measured signals only: repeat sightings, price history, order count.", batch: false },
-  RISK: { role: "Rule-based compliance/IP/return-risk classification.", batch: false },
-  JUDGE: { role: "Weighted rubric -> Money Score, with plain \"+X/Y dimension\" reasoning. No LLM.", batch: false },
+const AGENT_RESULT_STATUS_LABEL_NL: Record<string, string> = {
+  COMPLETED: "voltooid",
+  FAILED: "mislukt",
+  SKIPPED: "overgeslagen",
 };
 
-const MOCK_AGENT_INFO: Record<string, { role: string; tier: string; ai: boolean }> = {
-  MARKET: { role: "Reads demand and trend signals for the target market.", tier: "cheap", ai: true },
-  COMPETITOR: { role: "Maps the competitive landscape: sellers, pricing, positioning.", tier: "cheap", ai: true },
-  SUPPLIER: { role: "Compares suppliers on price, rating, shipping and MOQ.", tier: "— deterministic", ai: false },
-  MARGIN: { role: "Calculates bad/base/good unit-economics scenarios.", tier: "— deterministic", ai: false },
-  BRAND: { role: "Asks whether this can be a believable branded concept, not just a markup.", tier: "cheap", ai: true },
-  ANGLE: { role: "Generates 3-5 marketing angles, only for products Brand already likes.", tier: "standard", ai: true },
-  RISK: { role: "Compliance/IP/return risk. Category classification is rule-based; residual judgement is AI.", tier: "cheap", ai: true },
-  SKEPTIC: { role: "Argues the bear case: why this product is a bad idea.", tier: "standard", ai: true },
-  JUDGE: { role: "Computes the transparent Money Score rubric and writes the final why/concerns/next step.", tier: "strong", ai: true },
+const REAL_AGENT_ORDER = ["SCOUT", "DEDUP", "FILTER", "SUPPLIER", "COMPETITOR", "MARGIN", "TREND", "RISK", "JUDGE"] as const;
+const REAL_AGENT_META: Record<string, { batch: boolean }> = {
+  SCOUT: { batch: true },
+  DEDUP: { batch: true },
+  FILTER: { batch: true },
+  SUPPLIER: { batch: false },
+  COMPETITOR: { batch: false },
+  MARGIN: { batch: false },
+  TREND: { batch: false },
+  RISK: { batch: false },
+  JUDGE: { batch: false },
+};
+
+const MOCK_AGENT_ORDER = ["MARKET", "COMPETITOR", "SUPPLIER", "MARGIN", "BRAND", "ANGLE", "RISK", "SKEPTIC", "JUDGE"] as const;
+const MOCK_AGENT_META: Record<string, { tier: string; ai: boolean }> = {
+  MARKET: { tier: "goedkoop", ai: true },
+  COMPETITOR: { tier: "goedkoop", ai: true },
+  SUPPLIER: { tier: "— berekening", ai: false },
+  MARGIN: { tier: "— berekening", ai: false },
+  BRAND: { tier: "goedkoop", ai: true },
+  ANGLE: { tier: "standaard", ai: true },
+  RISK: { tier: "goedkoop", ai: true },
+  SKEPTIC: { tier: "standaard", ai: true },
+  JUDGE: { tier: "sterk", ai: true },
 };
 
 export default async function AgentsPage() {
@@ -51,7 +60,7 @@ export default async function AgentsPage() {
   ]);
 
   const stageByType = new Map<string, (typeof pipelineStages)[number]>();
-  for (const s of pipelineStages) if (!stageByType.has(s.stage)) stageByType.set(s.stage, s); // most recent first
+  for (const s of pipelineStages) if (!stageByType.has(s.stage)) stageByType.set(s.stage, s); // meest recente eerst
   const stageTotals = new Map<string, { processed: number; rejected: number; runs: number }>();
   for (const s of pipelineStages) {
     const t = stageTotals.get(s.stage) ?? { processed: 0, rejected: 0, runs: 0 };
@@ -67,68 +76,70 @@ export default async function AgentsPage() {
 
   return (
     <div>
-      <PageHeader title="Agents" description="What each agent does, and what it has actually run/cost so far." />
+      <PageHeader title="Agents" description="Wat elke agent doet, en wat er tot nu toe echt is uitgevoerd en gekost." />
       <div className="space-y-8 p-6">
         <div>
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">
-            Real pipeline (Apify discovery + rule-based agents, zero LLM calls)
+            Echte pipeline (Apify-zoekopdrachten + regelgebaseerde agents, geen AI)
           </h2>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {Object.entries(REAL_AGENT_INFO).map(([type, info]) => {
+            {REAL_AGENT_ORDER.map((type) => {
+              const info = AGENT_INFO_NL[type as keyof typeof AGENT_INFO_NL];
+              const meta = REAL_AGENT_META[type];
               const stage = stageByType.get(type);
               const totals = stageTotals.get(type);
               return (
-                <Card key={`real-${type}`}>
+                <Card key={`real-${type}`} className="card-elevated">
                   <CardHeader className="flex-row items-center justify-between space-y-0">
-                    <CardTitle className="text-base">{type}</CardTitle>
-                    {info.batch ? (
+                    <CardTitle className="text-base">{info.name}</CardTitle>
+                    {meta.batch ? (
                       stage ? (
-                        <Badge variant={stage.status === "FAILED" ? "destructive" : "outline"}>{stage.status}</Badge>
+                        <Badge variant={stage.status === "FAILED" ? "destructive" : "outline"}>
+                          {AGENT_RESULT_STATUS_LABEL_NL[stage.status] ?? stage.status}
+                        </Badge>
                       ) : (
-                        <Badge variant="outline">not run yet</Badge>
+                        <Badge variant="outline">nog niet uitgevoerd</Badge>
                       )
                     ) : (
-                      <Badge variant="outline">
-                        {type === "COMPETITOR" ? "apify" : "deterministic"}
-                      </Badge>
+                      <Badge variant="outline">{type === "COMPETITOR" ? "apify" : "berekening"}</Badge>
                     )}
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    <p className="text-sm text-muted-foreground">{info.role}</p>
-                    {info.batch ? (
+                    <p className="text-sm text-muted-foreground">{info.description}</p>
+                    {meta.batch ? (
                       stage ? (
                         <div className="space-y-1 text-xs">
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">
-                              processed (all-time, {totals?.runs ?? 0} run(s))
+                              verwerkt (totaal, {totals?.runs ?? 0}x uitgevoerd)
                             </span>
                             <span className="font-medium tabular-nums">{formatNumber(totals?.processed ?? 0)}</span>
                           </div>
                           {totals && totals.rejected > 0 && (
                             <div className="flex justify-between">
-                              <span className="text-muted-foreground">rejected</span>
+                              <span className="text-muted-foreground">afgewezen</span>
                               <span className="font-medium tabular-nums">{formatNumber(totals.rejected)}</span>
                             </div>
                           )}
                           <div className="flex justify-between">
-                            <span className="text-muted-foreground">last run</span>
+                            <span className="text-muted-foreground">laatste keer</span>
                             <span>{formatDateTime(stage.startedAt)}</span>
                           </div>
                           {stage.dataSource && <div className="text-[11px] text-muted-foreground">{stage.dataSource}</div>}
                           {stage.errorMessage && <div className="text-[11px] text-destructive">{stage.errorMessage}</div>}
                         </div>
                       ) : (
-                        <div className="text-xs text-muted-foreground">No runs recorded yet.</div>
+                        <div className="text-xs text-muted-foreground">Nog geen uitvoeringen vastgelegd.</div>
                       )
                     ) : (
                       <div className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">{formatNumber(realAgentCountByType[type] ?? 0)} product(s) analyzed</span>
+                        <span className="text-muted-foreground">{formatNumber(realAgentCountByType[type] ?? 0)} product(en) geanalyseerd</span>
                         {type === "COMPETITOR" ? (
                           <span className="font-medium tabular-nums">
                             {formatUsdPrecise(Number(marketEnrichmentSpend?._sum.actualCostUsd ?? 0))} (Apify)
                           </span>
                         ) : (
-                          <span className="font-medium tabular-nums text-muted-foreground">$0.00</span>
+                          <span className="font-medium tabular-nums text-muted-foreground">$0,00</span>
                         )}
                       </div>
                     )}
@@ -139,33 +150,35 @@ export default async function AgentsPage() {
           </div>
           {discoverySpend && (
             <p className="mt-2 text-xs text-muted-foreground">
-              Scout (AliExpress discovery) Apify spend: {formatUsdPrecise(Number(discoverySpend._sum.actualCostUsd ?? 0))}
+              Apify-kosten Scout (AliExpress-zoekopdrachten): {formatUsdPrecise(Number(discoverySpend._sum.actualCostUsd ?? 0))}
             </p>
           )}
         </div>
 
         <div>
-          <h2 className="mb-3 text-sm font-medium text-muted-foreground">Mock/demo pipeline (LLM)</h2>
+          <h2 className="mb-3 text-sm font-medium text-muted-foreground">Demo-pipeline (AI, alleen lokaal testen)</h2>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {Object.entries(MOCK_AGENT_INFO).map(([type, info]) => {
+            {MOCK_AGENT_ORDER.map((type) => {
+              const info = AGENT_INFO_NL[type as keyof typeof AGENT_INFO_NL];
+              const meta = MOCK_AGENT_META[type];
               const s = mockStatsByAgent[type];
               return (
-                <Card key={`mock-${type}`}>
+                <Card key={`mock-${type}`} className="card-elevated">
                   <CardHeader className="flex-row items-center justify-between space-y-0">
-                    <CardTitle className="text-base">{type}</CardTitle>
-                    <Badge variant="outline">{info.tier}</Badge>
+                    <CardTitle className="text-base">{info.name}</CardTitle>
+                    <Badge variant="outline">{meta.tier}</Badge>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <p className="text-sm text-muted-foreground">{info.role}</p>
-                    {info.ai ? (
+                    <p className="text-sm text-muted-foreground">{info.description}</p>
+                    {meta.ai ? (
                       <div className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">{formatNumber(s?._count._all ?? 0)} calls</span>
+                        <span className="text-muted-foreground">{formatNumber(s?._count._all ?? 0)} aanroepen</span>
                         <span className="font-medium tabular-nums">
-                          {formatEurPrecise(Number(s?._sum.estimatedCostEur ?? 0))} total
+                          {formatEurPrecise(Number(s?._sum.estimatedCostEur ?? 0))} totaal
                         </span>
                       </div>
                     ) : (
-                      <div className="text-xs text-muted-foreground">No AI calls — pure calculation.</div>
+                      <div className="text-xs text-muted-foreground">Geen AI-aanroepen — pure berekening.</div>
                     )}
                   </CardContent>
                 </Card>

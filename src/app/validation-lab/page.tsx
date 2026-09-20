@@ -1,8 +1,17 @@
+import { FlaskConical } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/empty-state";
 import { prisma } from "@/server/db";
 
 export const dynamic = "force-dynamic";
+
+const VALIDATION_STATUS_LABEL_NL: Record<string, string> = {
+  DRAFT: "Concept",
+  READY_FOR_APPROVAL: "Klaar voor goedkeuring",
+  APPROVED: "Goedgekeurd",
+  REJECTED: "Afgewezen",
+};
 
 export default async function ValidationLabPage() {
   const tests = await prisma.validationTest.findMany({ include: { product: true }, orderBy: { createdAt: "desc" } });
@@ -10,32 +19,28 @@ export default async function ValidationLabPage() {
   return (
     <div>
       <PageHeader
-        title="Validation Lab"
-        description="Prepares landing pages, ad concepts and copy for a High Potential product before you spend real money."
+        title="Validatielab"
+        description="Bereidt landingspagina's, advertentieconcepten en teksten voor een kansrijk product voor, voordat je er echt geld in steekt."
       />
       <div className="p-6">
-        <Card>
-          <CardContent className="py-10 text-sm text-muted-foreground space-y-2">
-            {tests.length === 0 ? (
-              <>
-                <p>No validation tests yet.</p>
-                <p>
-                  In V1, this screen is a placeholder for the future workflow: approve a HIGH_POTENTIAL
-                  opportunity, and MoneyScouter prepares a concept, positioning, landing page copy, ad
-                  concepts and image prompts for your review — never publishing or spending anything
-                  without explicit approval.
-                </p>
-              </>
-            ) : (
-              tests.map((t) => (
+        {tests.length === 0 ? (
+          <EmptyState
+            icon={FlaskConical}
+            title="Nog geen validatietests"
+            description="Keur een product met hoge potentie goed en MoneyScouter bereidt een concept, positionering, landingspaginatekst, advertentieconcepten en beeldideeën voor je voor — er wordt nooit iets gepubliceerd of uitgegeven zonder jouw expliciete goedkeuring."
+          />
+        ) : (
+          <Card>
+            <CardContent className="py-4 text-sm space-y-2">
+              {tests.map((t) => (
                 <div key={t.id} className="border-b border-border py-3 last:border-0">
                   <div className="font-medium text-foreground">{t.product.title}</div>
-                  <div className="text-xs">{t.status}</div>
+                  <div className="text-xs text-muted-foreground">{VALIDATION_STATUS_LABEL_NL[t.status] ?? t.status}</div>
                 </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
+              ))}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

@@ -46,7 +46,7 @@ export function formatRelativeToNow(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
   const diffMs = d.getTime() - Date.now();
   const diffMin = Math.round(diffMs / 60000);
-  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  const rtf = new Intl.RelativeTimeFormat("nl-NL", { numeric: "auto" });
   if (Math.abs(diffMin) < 60) return rtf.format(diffMin, "minute");
   const diffHr = Math.round(diffMin / 60);
   if (Math.abs(diffHr) < 24) return rtf.format(diffHr, "hour");

@@ -1,74 +1,112 @@
+import { History } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { RunScoutButton } from "@/components/run-scout-button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { RunStatusBadge } from "@/components/verdict-badge";
+import { CostDisplay } from "@/components/cost-display";
+import { EmptyState } from "@/components/empty-state";
 import { formatDateTime, formatEurPrecise, formatNumber, formatUsdPrecise } from "@/lib/format";
+import { explainStopReason } from "@/lib/labels";
 import { prisma } from "@/server/db";
 
 export const dynamic = "force-dynamic";
-// Best-effort headroom for the "Run Scout" server action invoked from this
-// page — actual ceiling still depends on the hosting plan's function
+// Best-effort headroom for the "Start zoekronde" server action invoked from
+// this page — actual ceiling still depends on the hosting plan's function
 // duration limit. The pipeline has its own internal time-budget guard (see
 // runScoutReal) that self-terminates well before this, so a run finalizes
 // itself instead of being killed mid-flight and left stuck RUNNING.
 export const maxDuration = 300;
 
+function formatDuration(startedAt: Date, finishedAt: Date | null): string {
+  if (!finishedAt) return "bezig…";
+  const ms = finishedAt.getTime() - startedAt.getTime();
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 export default async function ResearchRunsPage() {
-  const runs = await prisma.researchRun.findMany({ orderBy: { startedAt: "desc" }, take: 50 });
+  const runs = await prisma.researchRun.findMany({
+    orderBy: { startedAt: "desc" },
+    take: 50,
+    include: { searchRuns: { include: { keyword: true } } },
+  });
 
   return (
     <div>
-      <PageHeader title="Research Runs" description="Every pipeline execution, resumable and fully audited." actions={<RunScoutButton />} />
+      <PageHeader title="Zoekrondes" description="Elke keer dat MoneyScouter heeft gezocht, volledig herleidbaar." actions={<RunScoutButton />} />
       <div className="p-6">
         {runs.length === 0 ? (
-          <Card>
-            <CardContent className="py-16 text-center text-sm text-muted-foreground">No runs yet.</CardContent>
-          </Card>
+          <EmptyState
+            icon={History}
+            title="Nog geen zoekrondes"
+            description="Klik op “Start zoekronde” om producten te ontdekken, te selecteren en te beoordelen."
+          />
         ) : (
           <Card>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Mode</TableHead>
+                  <TableHead>Gestart</TableHead>
+                  <TableHead>Zoekterm</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Discovered</TableHead>
-                  <TableHead className="text-right">Rejected</TableHead>
-                  <TableHead className="text-right">Passed filter</TableHead>
-                  <TableHead className="text-right">Shortlisted</TableHead>
-                  <TableHead className="text-right">Market-enriched</TableHead>
-                  <TableHead className="text-right">High potential</TableHead>
-                  <TableHead className="text-right">Spend (actual)</TableHead>
+                  <TableHead className="text-right">Producten gevonden</TableHead>
+                  <TableHead className="text-right">Door selectie</TableHead>
+                  <TableHead className="text-right">Uitgebreid onderzocht</TableHead>
+                  <TableHead className="text-right">Kansen gevonden</TableHead>
+                  <TableHead className="text-right">Kosten</TableHead>
+                  <TableHead className="text-right">Duur</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {runs.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell>{formatDateTime(r.startedAt)}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{r.mode === "APIFY_DETERMINISTIC" ? "Apify" : "Mock"}</Badge>
-                      {r.testMode && (
-                        <Badge variant="outline" className="ml-1">
-                          test
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{r.status}</Badge>
-                      {r.stopReason && <span className="ml-2 text-[11px] text-muted-foreground">{r.stopReason}</span>}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{formatNumber(r.discoveredCount)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatNumber(r.rejectedCount)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatNumber(r.passedFilterCount)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatNumber(r.shortlistedCount)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatNumber(r.marketEnrichedCount)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatNumber(r.highPotentialCount)}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {r.mode === "APIFY_DETERMINISTIC" ? formatUsdPrecise(r.apifySpendUsd) : formatEurPrecise(r.spendEur)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {runs.map((r) => {
+                  const keywords = r.searchRuns.map((sr) => sr.keyword.keyword).join(", ");
+                  const stopExplained = explainStopReason(r.stopReason);
+                  return (
+                    <TableRow key={r.id}>
+                      <TableCell className="whitespace-nowrap">
+                        {formatDateTime(r.startedAt)}
+                        <div className="mt-0.5 flex gap-1">
+                          <Badge variant="secondary" className="font-normal">
+                            {r.mode === "APIFY_DETERMINISTIC" ? "Apify" : "Demo"}
+                          </Badge>
+                          {r.testMode && (
+                            <Badge variant="outline" className="font-normal">
+                              test
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="max-w-[220px] truncate text-muted-foreground" title={keywords}>
+                        {keywords || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <RunStatusBadge status={r.status} />
+                        {r.stopReason && (
+                          <div className="mt-1 max-w-[220px] text-[11px] text-muted-foreground">
+                            {stopExplained ?? r.stopReason}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{formatNumber(r.discoveredCount)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatNumber(r.passedFilterCount)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatNumber(r.deepResearchedCount)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatNumber(r.highPotentialCount)}</TableCell>
+                      <TableCell className="text-right">
+                        {r.mode === "APIFY_DETERMINISTIC" ? (
+                          <CostDisplay value={formatUsdPrecise(r.apifySpendUsd)} kind="actual" size="sm" />
+                        ) : (
+                          <span className="tabular-nums text-sm">{formatEurPrecise(r.spendEur)}</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                        {formatDuration(r.startedAt, r.finishedAt)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </Card>

@@ -84,37 +84,40 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  /* Navy/slate foundation instead of neutral gray — a slight blue hue
+     (~255°) throughout gives the "premium SaaS" depth the redesign asks
+     for without turning into a colorful dashboard. */
+  --background: oklch(0.16 0.019 262);
+  --foreground: oklch(0.97 0.005 262);
+  --card: oklch(0.208 0.021 262);
+  --card-foreground: oklch(0.97 0.005 262);
+  --popover: oklch(0.208 0.021 262);
+  --popover-foreground: oklch(0.97 0.005 262);
+  --primary: oklch(0.72 0.14 232);
+  --primary-foreground: oklch(0.16 0.02 262);
+  --secondary: oklch(0.26 0.022 262);
+  --secondary-foreground: oklch(0.97 0.005 262);
+  --muted: oklch(0.245 0.02 262);
+  --muted-foreground: oklch(0.66 0.02 262);
+  --accent: oklch(0.28 0.03 262);
+  --accent-foreground: oklch(0.97 0.005 262);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.72 0.14 232 / 60%);
+  --chart-1: oklch(0.72 0.14 232);
+  --chart-2: oklch(0.72 0.16 155);
+  --chart-3: oklch(0.78 0.16 80);
+  --chart-4: oklch(0.68 0.19 25);
+  --chart-5: oklch(0.68 0.18 305);
+  --sidebar: oklch(0.14 0.02 262);
+  --sidebar-foreground: oklch(0.94 0.008 262);
+  --sidebar-primary: oklch(0.72 0.14 232);
+  --sidebar-primary-foreground: oklch(0.16 0.02 262);
+  --sidebar-accent: oklch(0.235 0.024 262);
+  --sidebar-accent-foreground: oklch(0.97 0.005 262);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.72 0.14 232 / 60%);
 }
 
 @layer base {
@@ -126,5 +129,22 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+@layer utilities {
+  /* Subtle brand gradient for hero/header surfaces — tasteful, not loud. */
+  .surface-gradient {
+    background-image: radial-gradient(
+        120% 140% at 0% 0%,
+        oklch(0.72 0.14 232 / 10%) 0%,
+        transparent 55%
+      ),
+      radial-gradient(100% 120% at 100% 0%, oklch(0.68 0.18 305 / 7%) 0%, transparent 50%);
+  }
+  .card-elevated {
+    box-shadow:
+      0 1px 2px 0 oklch(0 0 0 / 8%),
+      0 8px 24px -8px oklch(0 0 0 / 22%);
   }
 }

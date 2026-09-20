@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { runScout } from "@/server/pipeline/orchestrator";
 import { runScoutReal } from "@/server/pipeline/orchestratorReal";
+import { getRunProgress, RunProgress } from "@/server/queries/runProgress";
 
 const PATHS_TO_REVALIDATE = [
   "/",
@@ -32,4 +33,10 @@ export async function runDemoScoutAction() {
   const result = await runScout({ trigger: "manual" });
   for (const path of PATHS_TO_REVALIDATE) revalidatePath(path);
   return result;
+}
+
+/** Read-only poll target for the live pipeline progress UI — never starts
+ * or affects a run, only reports what the backend already knows. */
+export async function getRunProgressAction(runId: string): Promise<RunProgress | null> {
+  return getRunProgress(runId);
 }

@@ -3,15 +3,18 @@ import { AgentType } from "@prisma/client";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { VerdictBadge, ComplianceRiskBadge, moneyScoreColorClass } from "@/components/verdict-badge";
-import { formatEur, formatDateTime, formatEurPrecise, formatNumber, formatUsdPrecise } from "@/lib/format";
+import { VerdictBadge, ComplianceRiskBadge } from "@/components/verdict-badge";
+import { MoneyScoreGauge } from "@/components/money-score-gauge";
+import { SectionCard } from "@/components/section-card";
+import { CostDisplay } from "@/components/cost-display";
+import { formatEur, formatDateTime, formatNumber, formatUsdPrecise } from "@/lib/format";
+import { PRODUCT_STATUS_LABEL_NL } from "@/lib/labels";
 import { getProductDetail } from "@/server/queries/productDetail";
 import {
   AngleFindings,
@@ -25,6 +28,7 @@ import {
 } from "@/server/pipeline/agents/schemas";
 import { TrendFindings } from "@/server/pipeline/agentsDeterministic/trend";
 import { CompetitorFindings as DeterministicCompetitorFindings } from "@/server/pipeline/agentsDeterministic/competitor";
+import { DeterministicScoringWeights } from "@/server/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +40,44 @@ function findAgent<T>(
   if (!r) return null;
   return { summary: r.summary, findings: r.findings as T };
 }
+
+const DETERMINISTIC_DIMENSION_LABELS_NL: Record<keyof DeterministicScoringWeights, string> = {
+  margin: "Marge",
+  demand: "Vraag",
+  competition: "Concurrentie",
+  supplierQuality: "Leverancier",
+  shipping: "Verzending",
+  marketPriceOpportunity: "Marktkans",
+  trend: "Momentum",
+  operationalRisk: "Risico",
+  highPotentialMin: "highPotentialMin",
+  interestingMin: "interestingMin",
+  watchMin: "watchMin",
+};
+const DETERMINISTIC_DIMENSIONS = [
+  "margin",
+  "demand",
+  "competition",
+  "supplierQuality",
+  "shipping",
+  "marketPriceOpportunity",
+  "trend",
+  "operationalRisk",
+] as const;
+
+const MOCK_DIMENSION_LABELS_NL: Record<string, string> = {
+  demand: "Vraag",
+  trend: "Trend",
+  margin: "Marge",
+  competition: "Concurrentie",
+  brandability: "Merkpotentie",
+  marketingAngles: "Marketing invalshoeken",
+  supplierQuality: "Leverancierskwaliteit",
+  shipping: "Verzending",
+  operationalEase: "Operationele inspanning",
+  risk: "Risico",
+  marketPriceOpportunity: "Marktkans",
+};
 
 export default async function OpportunityDetailPage({
   params,
@@ -64,24 +106,38 @@ export default async function OpportunityDetailPage({
   const totalAiCostEur = aiCalls.reduce((sum, c) => sum + Number(c.estimatedCostEur), 0);
   const totalApifyCostUsd = apifyCalls.reduce((sum, c) => sum + Number(c.actualCostUsd ?? c.estimatedCostUsd), 0);
 
+  // "Nederlandse markt" figures — the deterministic (real) Competitor Agent
+  // stores median/low/high market price directly; the mock-mode one only
+  // stores a min/max range. Both are shown, never invented for the other.
+  const detCompetitor =
+    competitorRaw && "medianMarketPriceEur" in competitorRaw.findings
+      ? (competitorRaw.findings as DeterministicCompetitorFindings)
+      : null;
+  const mockCompetitor =
+    competitorRaw && "priceRangeMinEur" in competitorRaw.findings ? (competitorRaw.findings as CompetitorFindings) : null;
+
+  const weights = latestScore?.weightsUsed as Partial<DeterministicScoringWeights> | null;
+  const isDeterministicRubric = !!weights && "operationalRisk" in weights;
+
   return (
     <div>
       <PageHeader
         title={product.title}
-        description={`${product.category} · first seen ${formatDateTime(product.firstSeenAt)} · last seen ${formatDateTime(product.lastSeenAt)} · seen ${product.timesSeen}x`}
+        description={`${product.category} · voor het eerst gezien ${formatDateTime(product.firstSeenAt)} · laatst gezien ${formatDateTime(product.lastSeenAt)} · ${product.timesSeen}x gezien`}
         actions={
           latestScore && (
-            <Badge variant="secondary">
-              Source: {isRealMode ? "Apify (real)" : "Mock demo"}
-            </Badge>
+            <Badge variant="secondary">Bron: {isRealMode ? "Apify (echt)" : "Demo (nagebootst)"}</Badge>
           )
         }
       />
 
       <div className="space-y-6 p-6">
-        {/* HEADER */}
-        <Card>
-          <CardContent className="flex flex-wrap items-center gap-6 py-5">
+        {/* OVERZICHT */}
+        <Card className="card-elevated">
+          <CardHeader>
+            <CardTitle>Overzicht</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center gap-6">
             {product.imageUrl && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -90,59 +146,204 @@ export default async function OpportunityDetailPage({
                 className="size-20 shrink-0 rounded-lg border border-border object-cover"
               />
             )}
-            <div className="flex items-center gap-6">
-              <div>
-                <div className="text-xs text-muted-foreground">Money Score</div>
-                <div className={`text-4xl font-bold tabular-nums ${moneyScoreColorClass(latestScore?.moneyScore ?? 0)}`}>
-                  {latestScore?.moneyScore ?? "—"}
-                </div>
-              </div>
+            <MoneyScoreGauge score={latestScore?.moneyScore ?? 0} size="lg" />
+            <div className="flex flex-col items-start gap-2">
               {latestScore && <VerdictBadge verdict={latestScore.verdict} className="text-sm px-3 py-1" />}
+              <Badge variant="outline">Status: {PRODUCT_STATUS_LABEL_NL[product.status]}</Badge>
               <ComplianceRiskBadge risk={product.complianceRisk} />
             </div>
             <div className="ml-auto text-right text-xs text-muted-foreground">
-              <div>Research cost for this analysis</div>
-              <div className="font-medium tabular-nums text-foreground">
-                {isRealMode ? formatUsdPrecise(totalApifyCostUsd) : formatEurPrecise(totalAiCostEur)}
+              <div>Onderzoekskosten voor deze analyse</div>
+              <div className="mt-1 font-medium text-foreground">
+                {isRealMode ? (
+                  <CostDisplay value={formatUsdPrecise(totalApifyCostUsd)} kind="actual" size="sm" />
+                ) : (
+                  formatEur(totalAiCostEur, 4)
+                )}
               </div>
             </div>
           </CardContent>
-        </Card>
-
-        {/* KEY METRICS */}
-        {margin && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">Key metrics</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <Metric label="Buy price" value={formatEur(margin.findings.buyPriceEur)} />
-              <Metric label="Shipping" value={formatEur(margin.findings.shippingCostEur)} />
-              <Metric label="Potential retail" value={formatEur(margin.findings.sellingPriceEur)} />
+          {margin && (
+            <CardContent className="grid grid-cols-2 gap-4 border-t border-border pt-4 sm:grid-cols-4">
+              <Metric label="Inkoopprijs" value={formatEur(margin.findings.buyPriceEur)} />
+              <Metric label="Potentiële verkoopprijs" value={formatEur(margin.findings.sellingPriceEur)} />
               <Metric
-                label="Base margin"
+                label="Verwachte marge"
                 value={`${formatEur(margin.findings.scenarios.base.contributionMarginEur)} (${margin.findings.scenarios.base.marginPercent}%)`}
               />
               {competitorSightings.length > 0 && (
-                <Metric label="Competitors" value={String(competitorSightings.length)} />
+                <Metric label="Concurrenten gevonden" value={String(competitorSightings.length)} />
               )}
-              {market && <Metric label="Trend" value={market.findings.trendDirection} />}
-              {trend && <Metric label="Trend score" value={`${trend.findings.trendScore}/10`} />}
-              {risk && <Metric label="Return risk" value={`${risk.findings.returnRiskEstimatePercent}%`} />}
-              {supplier && <Metric label="Best shipping" value={`${supplier.findings.leadTimeDaysMin}d`} />}
             </CardContent>
-          </Card>
+          )}
+        </Card>
+
+        {/* INKOOP & LEVERANCIER */}
+        {(margin || supplier || product.sources.length > 0) && (
+          <SectionCard title="Inkoop & leverancier">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              {margin && <Metric label="Inkoopprijs" value={formatEur(margin.findings.buyPriceEur)} />}
+              {margin && <Metric label="Verzendkosten" value={formatEur(margin.findings.shippingCostEur)} />}
+              {supplier && (
+                <Metric
+                  label="Levertijd"
+                  value={`${supplier.findings.leadTimeDaysMin}-${supplier.findings.leadTimeDaysMax} dagen`}
+                />
+              )}
+              {supplier && <Metric label="Beoordeling leverancier" value={`${supplier.findings.bestSupplier.rating}/5`} />}
+            </div>
+            {product.sources.length > 0 && (
+              <div className="mt-4 space-y-1.5 border-t border-border pt-4 text-sm">
+                {product.sources.map((s) => (
+                  <div key={s.id} className="flex items-center justify-between gap-2">
+                    <span className="truncate text-muted-foreground">{s.supplier.name}</span>
+                    <span className="tabular-nums font-medium">{formatEur(s.price)}</span>
+                    {s.url && (
+                      <a href={s.url} target="_blank" rel="noreferrer" className="shrink-0 text-xs text-primary hover:underline">
+                        bekijk bron
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </SectionCard>
         )}
 
-        {/* WHY THIS PRODUCT */}
+        {/* NEDERLANDSE MARKT */}
+        {(detCompetitor || mockCompetitor) && (
+          <SectionCard title="Nederlandse markt" description={competitorSummary}>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              {detCompetitor && (
+                <>
+                  <Metric
+                    label="Gemiddelde verkoopprijs"
+                    value={detCompetitor.medianMarketPriceEur != null ? formatEur(detCompetitor.medianMarketPriceEur) : "—"}
+                  />
+                  <Metric
+                    label="Laagste prijs"
+                    value={detCompetitor.lowestMarketPriceEur != null ? formatEur(detCompetitor.lowestMarketPriceEur) : "—"}
+                  />
+                  <Metric
+                    label="Hoogste prijs"
+                    value={detCompetitor.highestMarketPriceEur != null ? formatEur(detCompetitor.highestMarketPriceEur) : "—"}
+                  />
+                  <Metric label="Aantal gevonden aanbieders" value={String(detCompetitor.competitorCount)} />
+                  <Metric label="Concurrentieniveau" value={`${detCompetitor.marketSaturationScore}/10`} />
+                </>
+              )}
+              {mockCompetitor && (
+                <>
+                  <Metric label="Laagste prijs" value={formatEur(mockCompetitor.priceRangeMinEur)} />
+                  <Metric label="Hoogste prijs" value={formatEur(mockCompetitor.priceRangeMaxEur)} />
+                  <Metric label="Aantal gevonden aanbieders" value={String(mockCompetitor.competitorCount)} />
+                  <Metric label="Concurrentieniveau" value={mockCompetitor.competitorQuality} />
+                </>
+              )}
+            </div>
+            <div className="mt-4 grid gap-2 border-t border-border pt-4 sm:grid-cols-2">
+              {competitorSightings.map((s) => (
+                <a
+                  key={s.id}
+                  href={s.url ?? undefined}
+                  target={s.url ? "_blank" : undefined}
+                  rel={s.url ? "noreferrer" : undefined}
+                  className={`flex items-center justify-between rounded-md border border-border p-2 text-sm ${s.url ? "hover:border-primary/40" : ""}`}
+                >
+                  <span className="truncate">{s.competitor.name}</span>
+                  {s.matchConfidence != null && (
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {Math.round(s.matchConfidence * 100)}% overeenkomst
+                    </span>
+                  )}
+                  {s.positioning && <span className="shrink-0 text-muted-foreground">{s.positioning}</span>}
+                  {s.price != null && <span className="shrink-0 tabular-nums font-medium">{formatEur(s.price)}</span>}
+                </a>
+              ))}
+              {competitorSightings.length === 0 && (
+                <p className="text-sm text-muted-foreground">Geen aanbieders met voldoende zekerheid gevonden.</p>
+              )}
+            </div>
+          </SectionCard>
+        )}
+
+        {/* MARGE */}
+        {margin && (
+          <SectionCard title="Marge">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <ScenarioCard label="Conservatief" tone="danger" data={margin.findings.scenarios.bad} />
+              <ScenarioCard label="Verwacht" tone="info" data={margin.findings.scenarios.base} />
+              <ScenarioCard label="Optimistisch" tone="success" data={margin.findings.scenarios.good} />
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              BTW {margin.findings.vatRatePercent}% &middot; transactiekosten {margin.findings.transactionFeePercent}%
+              &middot; fulfilment {formatEur(margin.findings.fulfillmentCostEur)} &middot; verwacht retourpercentage{" "}
+              {margin.findings.returnRatePercent}%
+            </p>
+          </SectionCard>
+        )}
+
+        {/* WAAROM DEZE SCORE? */}
         {latestScore && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">Why this product</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
+          <SectionCard title="Waarom deze score?">
+            {isDeterministicRubric && weights ? (
+              <div className="space-y-2">
+                {DETERMINISTIC_DIMENSIONS.map((dim) => {
+                  const raw = (latestScore as unknown as Record<string, number | null>)[
+                    dim === "operationalRisk" ? "operationalEase" : dim
+                  ];
+                  const rawScore = raw ?? 0;
+                  const weight = weights[dim] ?? 0;
+                  const points = Math.round((rawScore / 10) * weight);
+                  const fraction = weight > 0 ? points / weight : 0;
+                  return (
+                    <div key={dim}>
+                      <div className="mb-1 flex items-center justify-between text-sm">
+                        <span>{DETERMINISTIC_DIMENSION_LABELS_NL[dim]}</span>
+                        <span className="tabular-nums font-medium">
+                          {points} / {weight}
+                        </span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className={`h-full rounded-full ${fraction >= 0.6 ? "bg-emerald-500" : fraction >= 0.4 ? "bg-amber-500" : "bg-red-500"}`}
+                          style={{ width: `${Math.min(100, fraction * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                {(
+                  [
+                    ["demand", latestScore.demand],
+                    ["trend", latestScore.trend],
+                    ["margin", latestScore.margin],
+                    ["competition", latestScore.competition],
+                    ["brandability", latestScore.brandability],
+                    ["marketingAngles", latestScore.marketingAngles],
+                    ["supplierQuality", latestScore.supplierQuality],
+                    ["shipping", latestScore.shipping],
+                    ["operationalEase", latestScore.operationalEase],
+                    ["risk", latestScore.risk],
+                    ["marketPriceOpportunity", latestScore.marketPriceOpportunity],
+                  ] as const
+                )
+                  .filter(([, value]) => value !== null)
+                  .map(([key, value]) => (
+                    <div key={key} className="rounded-md border border-border p-2 text-center">
+                      <div className="text-lg font-semibold tabular-nums">{value}/10</div>
+                      <div className="text-[11px] text-muted-foreground">{MOCK_DIMENSION_LABELS_NL[key]}</div>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            <div className="mt-4 grid gap-4 border-t border-border pt-4 sm:grid-cols-2">
               <div>
-                <div className="mb-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">WHY</div>
+                <div className="mb-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">STERKE PUNTEN</div>
                 <ul className="space-y-1 text-sm">
                   {latestScore.why.map((w, i) => (
                     <li key={i} className="flex gap-1.5">
@@ -153,10 +354,10 @@ export default async function OpportunityDetailPage({
                 </ul>
               </div>
               <div>
-                <div className="mb-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">CONCERNS</div>
+                <div className="mb-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">AANDACHTSPUNTEN</div>
                 <ul className="space-y-1 text-sm">
                   {latestScore.concerns.length === 0 && (
-                    <li className="text-muted-foreground">No major concerns flagged.</li>
+                    <li className="text-muted-foreground">Geen belangrijke aandachtspunten gevonden.</li>
                   )}
                   {latestScore.concerns.map((c, i) => (
                     <li key={i} className="flex gap-1.5">
@@ -168,50 +369,17 @@ export default async function OpportunityDetailPage({
               </div>
               {latestScore.nextStep && (
                 <div className="sm:col-span-2 border-t border-border pt-3">
-                  <span className="text-xs font-medium text-muted-foreground">NEXT STEP: </span>
+                  <span className="text-xs font-medium text-muted-foreground">VOLGENDE STAP: </span>
                   <span className="text-sm">{latestScore.nextStep}</span>
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </SectionCard>
         )}
 
-        {/* RUBRIC */}
-        {latestScore && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">Scoring rubric</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-              {(
-                [
-                  ["Demand", latestScore.demand],
-                  ["Trend", latestScore.trend],
-                  ["Margin", latestScore.margin],
-                  ["Competition", latestScore.competition],
-                  ["Brandability", latestScore.brandability],
-                  ["Marketing angles", latestScore.marketingAngles],
-                  ["Supplier quality", latestScore.supplierQuality],
-                  ["Shipping", latestScore.shipping],
-                  ["Operational ease / risk", latestScore.operationalEase],
-                  ["Risk", latestScore.risk],
-                  ["Market price opportunity", latestScore.marketPriceOpportunity],
-                ] as const
-              )
-                .filter(([, value]) => value !== null)
-                .map(([label, value]) => (
-                  <div key={label} className="rounded-md border border-border p-2 text-center">
-                    <div className="text-lg font-semibold tabular-nums">{value}/10</div>
-                    <div className="text-[11px] text-muted-foreground">{label}</div>
-                  </div>
-                ))}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* MARKET (mock/LLM mode) */}
+        {/* MARKT (mock/LLM mode) */}
         {market && (
-          <SectionCard title="Market">
+          <SectionCard title="Markt">
             <p className="text-sm">{market.findings.summary}</p>
             <div className="mt-3 flex flex-wrap gap-1.5">
               {market.findings.targetSegments.map((s) => (
@@ -229,125 +397,54 @@ export default async function OpportunityDetailPage({
           <SectionCard title="Trend">
             <p className="text-sm">{trend.findings.summary}</p>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
-              <Metric label="Trend score" value={`${trend.findings.trendScore}/10`} />
+              <Metric label="Trendscore" value={`${trend.findings.trendScore}/10`} />
               <Metric
-                label="Price movement"
+                label="Prijsbeweging"
                 value={trend.findings.priceMovementPercent != null ? `${trend.findings.priceMovementPercent}%` : "—"}
               />
-              <Metric label="Times seen" value={String(trend.findings.appearanceCount)} />
-              <Metric label="Orders at source" value={trend.findings.orderCount != null ? formatNumber(trend.findings.orderCount) : "—"} />
+              <Metric label="Keer gezien" value={String(trend.findings.appearanceCount)} />
+              <Metric label="Bestellingen bij bron" value={trend.findings.orderCount != null ? formatNumber(trend.findings.orderCount) : "—"} />
             </div>
           </SectionCard>
         )}
 
-        {/* COMPETITORS — uses the CompetitorSighting rows, populated in both
-            modes, so real URLs/prices/match confidence render regardless of
-            which pipeline produced them. */}
-        {(competitorSummary || competitorSightings.length > 0) && (
-          <SectionCard title="Competitors">
-            {competitorSummary && <p className="text-sm">{competitorSummary}</p>}
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {competitorSightings.map((s) => (
-                <a
-                  key={s.id}
-                  href={s.url ?? undefined}
-                  target={s.url ? "_blank" : undefined}
-                  rel={s.url ? "noreferrer" : undefined}
-                  className={`flex items-center justify-between rounded-md border border-border p-2 text-sm ${s.url ? "hover:border-primary/40" : ""}`}
-                >
-                  <span className="truncate">{s.competitor.name}</span>
-                  {s.matchConfidence != null && (
-                    <span className="shrink-0 text-[10px] text-muted-foreground">
-                      {Math.round(s.matchConfidence * 100)}% match
-                    </span>
-                  )}
-                  {s.positioning && <span className="shrink-0 text-muted-foreground">{s.positioning}</span>}
-                  {s.price != null && <span className="shrink-0 tabular-nums font-medium">{formatEur(s.price)}</span>}
-                </a>
-              ))}
-              {competitorSightings.length === 0 && (
-                <p className="text-sm text-muted-foreground">No confidently-matched market listings found.</p>
-              )}
-            </div>
-          </SectionCard>
-        )}
-
-        {/* SUPPLIERS */}
+        {/* LEVERANCIERS (detail) */}
         {supplier && (
-          <SectionCard title="Suppliers">
+          <SectionCard title="Leveranciers">
             <p className="text-sm">{supplier.findings.summary}</p>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
-              <Metric label="Known suppliers" value={String(supplier.findings.supplierCount)} />
-              <Metric label="Price spread" value={formatEur(supplier.findings.priceSpreadEur)} />
+              <Metric label="Bekende leveranciers" value={String(supplier.findings.supplierCount)} />
+              <Metric label="Prijsverschil" value={formatEur(supplier.findings.priceSpreadEur)} />
               <Metric
-                label="Lead time"
+                label="Levertijd"
                 value={`${supplier.findings.leadTimeDaysMin}-${supplier.findings.leadTimeDaysMax}d`}
               />
-              <Metric label="Quality score" value={`${supplier.findings.supplierQualityScore}/10`} />
+              <Metric label="Kwaliteitsscore" value={`${supplier.findings.supplierQualityScore}/10`} />
             </div>
-            {product.sources.length > 0 && (
-              <div className="mt-3 space-y-1 border-t border-border pt-3 text-sm">
-                {product.sources.map((s) => (
-                  <div key={s.id} className="flex items-center justify-between gap-2">
-                    <span className="truncate text-muted-foreground">{s.supplier.name}</span>
-                    <span className="tabular-nums font-medium">{formatEur(s.price)}</span>
-                    {s.url && (
-                      <a href={s.url} target="_blank" rel="noreferrer" className="shrink-0 text-xs text-primary hover:underline">
-                        view source
-                      </a>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
           </SectionCard>
         )}
 
-        {/* UNIT ECONOMICS */}
-        {margin && (
-          <SectionCard title="Unit economics">
-            <div className="grid gap-3 sm:grid-cols-3">
-              {(["bad", "base", "good"] as const).map((key) => (
-                <div key={key} className="rounded-md border border-border p-3">
-                  <div className="text-xs font-medium uppercase text-muted-foreground">{key}</div>
-                  <div className="mt-1 text-lg font-semibold tabular-nums">
-                    {formatEur(margin.findings.scenarios[key].contributionMarginEur)}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {margin.findings.scenarios[key].marginPercent}% margin
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              VAT {margin.findings.vatRatePercent}% &middot; transaction fee {margin.findings.transactionFeePercent}%
-              &middot; fulfillment {formatEur(margin.findings.fulfillmentCostEur)} &middot; est. return rate{" "}
-              {margin.findings.returnRatePercent}%
-            </p>
-          </SectionCard>
-        )}
-
-        {/* BRANDABILITY */}
+        {/* MERKPOTENTIE */}
         {brand && (
-          <SectionCard title="Brandability">
+          <SectionCard title="Merkpotentie">
             <p className="text-sm">{brand.findings.summary}</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <Metric label="Ideal customer" value={brand.findings.idealCustomer} />
-              <Metric label="Problem solved" value={brand.findings.problemSolved} />
-              <Metric label="Emotional hook" value={brand.findings.emotionalHook} />
-              <Metric label="Functional hook" value={brand.findings.functionalHook} />
+              <Metric label="Ideale klant" value={brand.findings.idealCustomer} />
+              <Metric label="Opgelost probleem" value={brand.findings.problemSolved} />
+              <Metric label="Emotionele haak" value={brand.findings.emotionalHook} />
+              <Metric label="Functionele haak" value={brand.findings.functionalHook} />
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {brand.findings.canBundle && <Badge variant="secondary">bundle potential</Badge>}
-              {brand.findings.canAddPackagingValue && <Badge variant="secondary">packaging value</Badge>}
-              <Badge variant="secondary">repeat purchase: {brand.findings.repeatPurchasePotential}</Badge>
+              {brand.findings.canBundle && <Badge variant="secondary">bundelpotentie</Badge>}
+              {brand.findings.canAddPackagingValue && <Badge variant="secondary">verpakkingswaarde</Badge>}
+              <Badge variant="secondary">herhaalaankoop: {brand.findings.repeatPurchasePotential}</Badge>
             </div>
           </SectionCard>
         )}
 
-        {/* MARKETING ANGLES */}
+        {/* MARKETING INVALSHOEKEN */}
         {angle && (
-          <SectionCard title="Marketing angles">
+          <SectionCard title="Marketing invalshoeken">
             <div className="grid gap-3 sm:grid-cols-2">
               {angle.findings.angles.map((a, i) => (
                 <div key={i} className="rounded-md border border-border p-3 text-sm space-y-1">
@@ -369,11 +466,11 @@ export default async function OpportunityDetailPage({
           </SectionCard>
         )}
 
-        {/* SKEPTIC */}
+        {/* KRITISCHE BLIK */}
         {skeptic && (
-          <SectionCard title="Skeptic">
+          <SectionCard title="Kritische blik">
             <Badge variant="outline" className="mb-2">
-              lean: {skeptic.findings.verdictLean}
+              neiging: {skeptic.findings.verdictLean}
             </Badge>
             <p className="text-sm font-medium">{skeptic.findings.strongestObjection}</p>
             <ul className="mt-2 space-y-1 text-sm">
@@ -387,13 +484,13 @@ export default async function OpportunityDetailPage({
           </SectionCard>
         )}
 
-        {/* RISKS */}
+        {/* RISICO'S */}
         {risk && (
-          <SectionCard title="Risks">
+          <SectionCard title="Risico's">
             <div className="flex flex-wrap gap-2">
               <ComplianceRiskBadge risk={product.complianceRisk} />
-              <Badge variant="outline">IP risk: {risk.findings.ipRisk}</Badge>
-              <Badge variant="outline">Return risk: {risk.findings.returnRiskEstimatePercent}%</Badge>
+              <Badge variant="outline">IP-risico: {risk.findings.ipRisk}</Badge>
+              <Badge variant="outline">Retourrisico: {risk.findings.returnRiskEstimatePercent}%</Badge>
             </div>
             {risk.findings.flags.length > 0 && (
               <ul className="mt-3 space-y-1 text-sm">
@@ -408,10 +505,10 @@ export default async function OpportunityDetailPage({
           </SectionCard>
         )}
 
-        {/* AGENT REPORTS */}
+        {/* AGENT-RAPPORTEN — technisch, secundair */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">Agent reports</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Agent-rapporten (technisch)</CardTitle>
           </CardHeader>
           <CardContent>
             <Accordion multiple>
@@ -431,10 +528,10 @@ export default async function OpportunityDetailPage({
           </CardContent>
         </Card>
 
-        {/* DECISION HISTORY */}
+        {/* BESLISSINGSGESCHIEDENIS — technisch, secundair */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">Decision history</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Beslissingsgeschiedenis (technisch)</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {decisions.map((d) => (
@@ -448,7 +545,7 @@ export default async function OpportunityDetailPage({
                 <span className="shrink-0 text-xs text-muted-foreground">{formatDateTime(d.createdAt)}</span>
               </div>
             ))}
-            {decisions.length === 0 && <p className="text-sm text-muted-foreground">No decisions recorded yet.</p>}
+            {decisions.length === 0 && <p className="text-sm text-muted-foreground">Nog geen beslissingen vastgelegd.</p>}
           </CardContent>
         </Card>
       </div>
@@ -465,14 +562,26 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+function ScenarioCard({
+  label,
+  tone,
+  data,
+}: {
+  label: string;
+  tone: "danger" | "info" | "success";
+  data: { contributionMarginEur: number; marginPercent: number };
+}) {
+  const toneClass =
+    tone === "success"
+      ? "border-emerald-500/30 bg-emerald-500/5"
+      : tone === "danger"
+        ? "border-red-500/25 bg-red-500/5"
+        : "border-cyan-500/25 bg-cyan-500/5";
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-      <Separator className="hidden" />
-    </Card>
+    <div className={`rounded-md border p-3 ${toneClass}`}>
+      <div className="text-xs font-medium uppercase text-muted-foreground">{label}</div>
+      <div className="mt-1 text-lg font-semibold tabular-nums">{formatEur(data.contributionMarginEur)}</div>
+      <div className="text-xs text-muted-foreground">{data.marginPercent}% marge</div>
+    </div>
   );
 }
