@@ -44,3 +44,12 @@ export async function buildProductBundle(productId: string): Promise<ProductBund
     })),
   };
 }
+
+/** The ProductSource.id behind ProductBundle.bestSource — needed for
+ * queries keyed by source (e.g. price history) that the bundle DTO itself
+ * doesn't carry an id for. */
+export async function getBestProductSourceId(productId: string): Promise<string> {
+  const sources = await prisma.productSource.findMany({ where: { productId }, orderBy: { price: "asc" }, take: 1 });
+  if (sources.length === 0) throw new Error(`Product ${productId} has no sources`);
+  return sources[0].id;
+}
