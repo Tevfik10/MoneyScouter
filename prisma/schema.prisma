@@ -160,6 +160,11 @@ model Product {
 
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @updatedAt
+  // How many times this product has been re-discovered (NEW + every
+  // SEEN_BEFORE/UPDATED dedup encounter). A real, measured "repeated
+  // appearance frequency" signal for the Trend Agent — master spec V1.1
+  // section 5/10 — never a guess.
+  timesSeen   Int      @default(1)
   createdAt   DateTime @default(now())
 
   sources             ProductSource[]

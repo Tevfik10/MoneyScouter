@@ -80,7 +80,10 @@ export async function upsertDiscoveredProduct(discovered: DiscoveredProduct): Pr
   }
 
   const product = existingFingerprint.product;
-  await prisma.product.update({ where: { id: product.id }, data: { lastSeenAt: new Date() } });
+  await prisma.product.update({
+    where: { id: product.id },
+    data: { lastSeenAt: new Date(), timesSeen: { increment: 1 } },
+  });
 
   const existingSource = product.sources.find(
     (s) =>
