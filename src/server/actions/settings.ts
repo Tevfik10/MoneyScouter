@@ -72,3 +72,42 @@ export async function updateShortlistAction(formData: FormData) {
   });
   revalidatePath("/settings");
 }
+
+export async function updateApifyBudgetAction(formData: FormData) {
+  await setSetting(SETTINGS.apifyBudget, {
+    dailyTargetUsd: num(formData, "dailyTargetUsd"),
+    hardLimitUsd: num(formData, "hardLimitUsd"),
+  });
+  revalidatePath("/settings");
+  revalidatePath("/costs");
+  revalidatePath("/");
+}
+
+export async function updateScoutConfigAction(formData: FormData) {
+  await setSetting(SETTINGS.scoutConfig, {
+    testMode: formData.get("testMode") === "on",
+    maxKeywordsPerRun: num(formData, "maxKeywordsPerRun"),
+    maxDiscoveryItemsTotal: num(formData, "maxDiscoveryItemsTotal"),
+    maxMarketEnrichmentItems: num(formData, "maxMarketEnrichmentItems"),
+    testModeApifyBudgetCapUsd: num(formData, "testModeApifyBudgetCapUsd"),
+  });
+  revalidatePath("/settings");
+  revalidatePath("/discover");
+}
+
+export async function updateDeterministicScoringWeightsAction(formData: FormData) {
+  await setSetting(SETTINGS.deterministicScoringWeights, {
+    margin: num(formData, "margin"),
+    demand: num(formData, "demand"),
+    competition: num(formData, "competition"),
+    supplierQuality: num(formData, "supplierQuality"),
+    shipping: num(formData, "shipping"),
+    marketPriceOpportunity: num(formData, "marketPriceOpportunity"),
+    trend: num(formData, "trend"),
+    operationalRisk: num(formData, "operationalRisk"),
+    highPotentialMin: num(formData, "highPotentialMin"),
+    interestingMin: num(formData, "interestingMin"),
+    watchMin: num(formData, "watchMin"),
+  });
+  revalidatePath("/settings");
+}

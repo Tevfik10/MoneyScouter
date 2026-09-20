@@ -14,11 +14,13 @@ export function RunScoutButton() {
       disabled={isPending}
       onClick={() => {
         startTransition(async () => {
-          toast.info("Scout run started… discovering, filtering and researching products.");
+          toast.info("Scout run started… real Apify discovery, zero LLM calls.");
           try {
             const result = await runScoutAction();
             if (result.status === "BUDGET_STOPPED") {
-              toast.warning("Run stopped: daily AI budget reached.");
+              toast.warning("Run stopped: daily Apify budget reached.");
+            } else if (result.status === "FAILED") {
+              toast.error("Run failed — check Research Runs for details.");
             } else {
               toast.success("Scout run complete.");
             }

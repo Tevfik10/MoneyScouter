@@ -3,28 +3,44 @@ import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { formatEur, formatEurPrecise, formatDateTime, formatNumber } from "@/lib/format";
-import { getCostOverview } from "@/server/queries/costs";
+import { formatEur, formatEurPrecise, formatUsd, formatUsdPrecise, formatDateTime, formatNumber } from "@/lib/format";
+import { getApifyCostOverview, getCostOverview } from "@/server/queries/costs";
 import { getBudgetSnapshot, getMonthSpend } from "@/server/queries/dashboard";
+import { getApifyBudgetSnapshot } from "@/server/queries/apify";
 
 export const dynamic = "force-dynamic";
 
 export default async function CostsPage() {
-  const [overview, budget, monthSpend] = await Promise.all([
+  const [overview, budget, monthSpend, apifyOverview, apifyBudget] = await Promise.all([
     getCostOverview(),
     getBudgetSnapshot(),
     getMonthSpend(),
+    getApifyCostOverview(),
+    getApifyBudgetSnapshot(),
   ]);
 
   return (
     <div>
-      <PageHeader title="Costs" description="Every euro spent on AI, traced back to run, agent and model tier." />
+      <PageHeader title="Costs" description="Every dollar/euro spent, traced back to run, agent, actor and model tier." />
       <div className="space-y-6 p-6">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Today" value={`${formatEur(budget.spentTodayEur)} / ${formatEur(budget.dailyTargetEur)}`} sub={`Hard limit ${formatEur(budget.hardLimitEur)}`} />
-          <StatCard label="This month" value={formatEur(monthSpend)} />
-          <StatCard label="Cost per deep-researched product" value={formatEur(overview.costPerShortlisted)} />
-          <StatCard label="Cost per high-potential opportunity" value={formatEur(overview.costPerHighPotential)} />
+        <div>
+          <h2 className="mb-2 text-sm font-medium text-muted-foreground">Apify (real discovery/enrichment)</h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Today" value={`${formatUsd(apifyBudget.spentTodayUsd)} / ${formatUsd(apifyBudget.dailyTargetUsd)}`} sub={`Hard limit ${formatUsd(apifyBudget.hardLimitUsd)}`} />
+            <StatCard label="All-time Apify spend" value={formatUsd(apifyOverview.totalSpendUsd)} />
+            <StatCard label="Apify calls made" value={formatNumber(apifyOverview.totalCalls)} />
+            <StatCard label="Spend by purpose" value={apifyOverview.byPurpose.map((p) => `${p.purpose}: ${formatUsd(Number(p._sum.actualCostUsd ?? 0))}`).join(" · ") || "—"} />
+          </div>
+        </div>
+
+        <div>
+          <h2 className="mb-2 text-sm font-medium text-muted-foreground">AI (mock/demo pipeline)</h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Today" value={`${formatEur(budget.spentTodayEur)} / ${formatEur(budget.dailyTargetEur)}`} sub={`Hard limit ${formatEur(budget.hardLimitEur)}`} />
+            <StatCard label="This month" value={formatEur(monthSpend)} />
+            <StatCard label="Cost per deep-researched product" value={formatEur(overview.costPerShortlisted)} />
+            <StatCard label="Cost per high-potential opportunity" value={formatEur(overview.costPerHighPotential)} />
+          </div>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -92,10 +108,12 @@ export default async function CostsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Started</TableHead>
+                  <TableHead>Mode</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Deep researched</TableHead>
                   <TableHead className="text-right">High potential</TableHead>
-                  <TableHead className="text-right">Spend</TableHead>
+                  <TableHead className="text-right">AI spend</TableHead>
+                  <TableHead className="text-right">Apify spend</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -107,11 +125,15 @@ export default async function CostsPage() {
                       </Link>
                     </TableCell>
                     <TableCell>
+                      <Badge variant="secondary">{r.mode === "APIFY_DETERMINISTIC" ? "Apify" : "Mock"}</Badge>
+                    </TableCell>
+                    <TableCell>
                       <Badge variant="outline">{r.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{r.deepResearchedCount}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.highPotentialCount}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatEurPrecise(r.spendEur)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatUsdPrecise(r.apifySpendUsd)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

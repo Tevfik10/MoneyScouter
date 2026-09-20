@@ -20,6 +20,19 @@ export function formatEurPrecise(value: Numeric): string {
   return formatEur(value, 4);
 }
 
+export function formatUsd(value: Numeric, maximumFractionDigits = 2): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits,
+    minimumFractionDigits: maximumFractionDigits === 0 ? 0 : 2,
+  }).format(toNumber(value));
+}
+
+export function formatUsdPrecise(value: Numeric): string {
+  return formatUsd(value, 4);
+}
+
 export function formatNumber(value: Numeric): string {
   return new Intl.NumberFormat("nl-NL").format(toNumber(value));
 }

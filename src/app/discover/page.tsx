@@ -1,11 +1,16 @@
 import { PageHeader } from "@/components/page-header";
 import { RunScoutButton } from "@/components/run-scout-button";
+import { RunDemoScoutButton } from "@/components/run-demo-scout-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { getPoolCategoryDefs } from "@/server/providers/discovery/mockDiscoveryProvider";
 import { getLatestRun } from "@/server/queries/dashboard";
-import { formatNumber } from "@/lib/format";
+import { getApifyBudgetSnapshot } from "@/server/queries/apify";
+import { getAllSettings } from "@/server/settings";
+import { formatNumber, formatUsd } from "@/lib/format";
+import { prisma } from "@/server/db";
+import { ALIEXPRESS_ACTOR_ID } from "@/server/providers/apify/aliexpress/provider";
+import { GOOGLE_SHOPPING_ACTOR_ID } from "@/server/providers/apify/googleShopping/provider";
 
 export const dynamic = "force-dynamic";
 
@@ -17,15 +22,28 @@ const EXAMPLE_QUERIES = [
 ];
 
 export default async function DiscoverPage() {
-  const categories = getPoolCategoryDefs();
-  const run = await getLatestRun();
+  const [run, apifyBudget, settings, topics] = await Promise.all([
+    getLatestRun(),
+    getApifyBudgetSnapshot(),
+    getAllSettings(),
+    prisma.searchTopic.findMany({
+      orderBy: { name: "asc" },
+      include: { _count: { select: { keywords: true } } },
+    }),
+  ]);
+  const hasApifyToken = !!process.env.APIFY_API_TOKEN;
 
   return (
     <div>
       <PageHeader
         title="Discover"
         description="Providers scan for new commercial opportunities before anything is filtered or analyzed."
-        actions={<RunScoutButton />}
+        actions={
+          <div className="flex items-center gap-2">
+            <RunDemoScoutButton />
+            <RunScoutButton />
+          </div>
+        }
       />
       <div className="space-y-6 p-6">
         <Card>
@@ -46,22 +64,49 @@ export default async function DiscoverPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">Discovery providers</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Real providers (Apify)</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between rounded-md border border-border p-3">
               <div>
-                <div className="font-medium">mock</div>
+                <div className="font-medium">{ALIEXPRESS_ACTOR_ID}</div>
                 <div className="text-xs text-muted-foreground">
-                  Deterministic demo catalog — stands in for AliExpress/Alibaba/CJdropshipping/Google
-                  Shopping until real adapters are wired up.
+                  Discovery — real AliExpress search results, normalized into products, deduplicated by fingerprint.
                 </div>
               </div>
-              <Badge>enabled</Badge>
+              <Badge variant={hasApifyToken ? "default" : "outline"}>
+                {hasApifyToken ? "configured" : "APIFY_API_TOKEN missing"}
+              </Badge>
             </div>
+            <div className="flex items-center justify-between rounded-md border border-border p-3">
+              <div>
+                <div className="font-medium">{GOOGLE_SHOPPING_ACTOR_ID}</div>
+                <div className="text-xs text-muted-foreground">
+                  Market enrichment — real competitor listings, fuzzy-matched. Only called on shortlisted products.
+                </div>
+              </div>
+              <Badge variant={hasApifyToken ? "default" : "outline"}>
+                {hasApifyToken ? "configured" : "APIFY_API_TOKEN missing"}
+              </Badge>
+            </div>
+            <div className="flex items-center justify-between rounded-md border border-border p-3">
+              <div>
+                <div className="font-medium">mock</div>
+                <div className="text-xs text-muted-foreground">
+                  Deterministic demo catalog, no network calls — used only by &ldquo;Run Demo&rdquo;.
+                </div>
+              </div>
+              <Badge variant="secondary">local dev / demo only</Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Apify budget today: {formatUsd(apifyBudget.spentTodayUsd)} / {formatUsd(apifyBudget.dailyTargetUsd)}{" "}
+              (hard limit {formatUsd(apifyBudget.hardLimitUsd)}). Test mode is{" "}
+              {settings.scoutConfig.testMode ? "on" : "off"} — configurable in Settings.
+            </p>
             {run && (
               <p className="text-xs text-muted-foreground">
-                Last run discovered {formatNumber(run.discoveredCount)} items.
+                Last run ({run.mode === "APIFY_DETERMINISTIC" ? "Apify" : "mock"}) discovered{" "}
+                {formatNumber(run.discoveredCount)} items.
               </p>
             )}
           </CardContent>
@@ -70,15 +115,19 @@ export default async function DiscoverPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Catalog categories ({categories.length})
+              Search topics ({topics.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2">
-            {categories.map((c) => (
-              <Badge key={c.category} variant={c.excluded ? "destructive" : c.highRisk ? "outline" : "secondary"}>
-                {c.category}
-                {c.excluded && " (excluded)"}
-                {c.highRisk && " (high risk)"}
+            {topics.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No search topics configured yet — they&apos;ll seed automatically on the next real run, or you can
+                seed them now from Settings.
+              </p>
+            )}
+            {topics.map((t) => (
+              <Badge key={t.id} variant={t.enabled ? "secondary" : "outline"}>
+                {t.name} ({t._count.keywords})
               </Badge>
             ))}
           </CardContent>

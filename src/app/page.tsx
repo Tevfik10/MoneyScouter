@@ -15,6 +15,8 @@ import {
   getMonthSpend,
   getTopOpportunities,
 } from "@/server/queries/dashboard";
+import { getApifyBudgetSnapshot } from "@/server/queries/apify";
+import { formatUsd } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -23,14 +25,25 @@ const FUNNEL_STAGES: Array<{ key: string; label: string }> = [
   { key: "rejectedCount", label: "auto-rejected" },
   { key: "passedFilterCount", label: "passed filters" },
   { key: "enrichedCount", label: "analyzed" },
+  { key: "shortlistedCount", label: "shortlisted" },
   { key: "deepResearchedCount", label: "deeply researched" },
+  { key: "marketEnrichedCount", label: "market-enriched" },
   { key: "highPotentialCount", label: "high-potential" },
 ];
+
+function formatDuration(startedAt: Date, finishedAt: Date | null): string {
+  if (!finishedAt) return "in progress…";
+  const ms = finishedAt.getTime() - startedAt.getTime();
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
 
 export default async function DashboardPage() {
   const run = await getLatestRun();
   const budget = await getBudgetSnapshot();
   const monthSpend = await getMonthSpend();
+  const apifyBudget = await getApifyBudgetSnapshot();
 
   return (
     <div>
@@ -38,7 +51,7 @@ export default async function DashboardPage() {
         title="Dashboard"
         description={
           run
-            ? `Last run ${formatRelativeToNow(run.startedAt)} — ${run.status.replace("_", " ").toLowerCase()}`
+            ? `Last run (${run.mode === "APIFY_DETERMINISTIC" ? "Apify" : "mock"}) ${formatRelativeToNow(run.startedAt)} — ${run.status.replace("_", " ").toLowerCase()}${run.finishedAt ? `, took ${formatDuration(run.startedAt, run.finishedAt)}` : ""}`
             : "No run yet. Start your first Scout run below."
         }
         actions={<RunScoutButton />}
@@ -82,7 +95,7 @@ export default async function DashboardPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-sm font-medium text-muted-foreground">AI cost</CardTitle>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Cost</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div>
@@ -105,8 +118,18 @@ export default async function DashboardPage() {
                     <span className="tabular-nums font-medium">{formatEur(monthSpend)}</span>
                   </div>
                   <div className="flex items-baseline justify-between text-sm">
-                    <span>This run</span>
+                    <span>This run (AI)</span>
                     <span className="tabular-nums font-medium">{formatEur(run.spendEur)}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between text-sm border-t border-border pt-3">
+                    <span>Apify today</span>
+                    <span className="tabular-nums font-medium">
+                      {formatUsd(apifyBudget.spentTodayUsd)} / {formatUsd(apifyBudget.dailyTargetUsd)}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between text-sm">
+                    <span>This run (Apify)</span>
+                    <span className="tabular-nums font-medium">{formatUsd(run.apifySpendUsd)}</span>
                   </div>
                 </CardContent>
               </Card>

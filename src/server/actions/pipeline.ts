@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { runScout } from "@/server/pipeline/orchestrator";
+import { runScoutReal } from "@/server/pipeline/orchestratorReal";
 
 const PATHS_TO_REVALIDATE = [
   "/",
@@ -11,9 +12,23 @@ const PATHS_TO_REVALIDATE = [
   "/products",
   "/watchlist",
   "/discover",
+  "/agents",
+  "/competitors",
+  "/suppliers",
 ];
 
+/** The primary "Run Scout" action — launches a real run (Apify discovery,
+ * zero LLM calls, rule-based Judge). Per master spec V1.1 section 14. */
 export async function runScoutAction() {
+  const result = await runScoutReal({ trigger: "manual" });
+  for (const path of PATHS_TO_REVALIDATE) revalidatePath(path);
+  return result;
+}
+
+/** Secondary action for local development/demo without Apify credentials —
+ * the original V1 mock-discovery + mock-LLM pipeline. Never the default
+ * button; only exposed from the Discover page, clearly labeled. */
+export async function runDemoScoutAction() {
   const result = await runScout({ trigger: "manual" });
   for (const path of PATHS_TO_REVALIDATE) revalidatePath(path);
   return result;

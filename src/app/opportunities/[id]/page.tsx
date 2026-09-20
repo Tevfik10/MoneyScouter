@@ -11,7 +11,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { VerdictBadge, ComplianceRiskBadge, moneyScoreColorClass } from "@/components/verdict-badge";
-import { formatEur, formatDateTime, formatEurPrecise } from "@/lib/format";
+import { formatEur, formatDateTime, formatEurPrecise, formatNumber, formatUsdPrecise } from "@/lib/format";
 import { getProductDetail } from "@/server/queries/productDetail";
 import {
   AngleFindings,
@@ -23,6 +23,8 @@ import {
   SkepticFindings,
   SupplierFindings,
 } from "@/server/pipeline/agents/schemas";
+import { TrendFindings } from "@/server/pipeline/agentsDeterministic/trend";
+import { CompetitorFindings as DeterministicCompetitorFindings } from "@/server/pipeline/agentsDeterministic/competitor";
 
 export const dynamic = "force-dynamic";
 
@@ -44,10 +46,14 @@ export default async function OpportunityDetailPage({
   const detail = await getProductDetail(id);
   if (!detail) notFound();
 
-  const { product, latestScore, agentResults, decisions, aiCalls } = detail;
+  const { product, latestScore, agentResults, decisions, aiCalls, apifyCalls, competitorSightings } = detail;
+
+  const isRealMode = latestScore?.researchRun.mode === "APIFY_DETERMINISTIC";
 
   const market = findAgent<MarketFindings>(agentResults, AgentType.MARKET);
-  const competitor = findAgent<CompetitorFindings>(agentResults, AgentType.COMPETITOR);
+  const trend = findAgent<TrendFindings>(agentResults, AgentType.TREND);
+  const competitorRaw = findAgent<CompetitorFindings | DeterministicCompetitorFindings>(agentResults, AgentType.COMPETITOR);
+  const competitorSummary = competitorRaw?.findings.summary;
   const supplier = findAgent<SupplierFindings>(agentResults, AgentType.SUPPLIER);
   const margin = findAgent<MarginFindings>(agentResults, AgentType.MARGIN);
   const brand = findAgent<BrandFindings>(agentResults, AgentType.BRAND);
@@ -56,12 +62,20 @@ export default async function OpportunityDetailPage({
   const skeptic = findAgent<SkepticFindings>(agentResults, AgentType.SKEPTIC);
 
   const totalAiCostEur = aiCalls.reduce((sum, c) => sum + Number(c.estimatedCostEur), 0);
+  const totalApifyCostUsd = apifyCalls.reduce((sum, c) => sum + Number(c.actualCostUsd ?? c.estimatedCostUsd), 0);
 
   return (
     <div>
       <PageHeader
         title={product.title}
-        description={`${product.category} · first seen ${formatDateTime(product.firstSeenAt)}`}
+        description={`${product.category} · first seen ${formatDateTime(product.firstSeenAt)} · last seen ${formatDateTime(product.lastSeenAt)} · seen ${product.timesSeen}x`}
+        actions={
+          latestScore && (
+            <Badge variant="secondary">
+              Source: {isRealMode ? "Apify (real)" : "Mock demo"}
+            </Badge>
+          )
+        }
       />
 
       <div className="space-y-6 p-6">
@@ -88,7 +102,9 @@ export default async function OpportunityDetailPage({
             </div>
             <div className="ml-auto text-right text-xs text-muted-foreground">
               <div>Research cost for this analysis</div>
-              <div className="font-medium tabular-nums text-foreground">{formatEurPrecise(totalAiCostEur)}</div>
+              <div className="font-medium tabular-nums text-foreground">
+                {isRealMode ? formatUsdPrecise(totalApifyCostUsd) : formatEurPrecise(totalAiCostEur)}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -107,8 +123,11 @@ export default async function OpportunityDetailPage({
                 label="Base margin"
                 value={`${formatEur(margin.findings.scenarios.base.contributionMarginEur)} (${margin.findings.scenarios.base.marginPercent}%)`}
               />
-              {competitor && <Metric label="Competitors" value={String(competitor.findings.competitorCount)} />}
+              {competitorSightings.length > 0 && (
+                <Metric label="Competitors" value={String(competitorSightings.length)} />
+              )}
               {market && <Metric label="Trend" value={market.findings.trendDirection} />}
+              {trend && <Metric label="Trend score" value={`${trend.findings.trendScore}/10`} />}
               {risk && <Metric label="Return risk" value={`${risk.findings.returnRiskEstimatePercent}%`} />}
               {supplier && <Metric label="Best shipping" value={`${supplier.findings.leadTimeDaysMin}d`} />}
             </CardContent>
@@ -174,20 +193,23 @@ export default async function OpportunityDetailPage({
                   ["Marketing angles", latestScore.marketingAngles],
                   ["Supplier quality", latestScore.supplierQuality],
                   ["Shipping", latestScore.shipping],
-                  ["Operational ease", latestScore.operationalEase],
+                  ["Operational ease / risk", latestScore.operationalEase],
                   ["Risk", latestScore.risk],
+                  ["Market price opportunity", latestScore.marketPriceOpportunity],
                 ] as const
-              ).map(([label, value]) => (
-                <div key={label} className="rounded-md border border-border p-2 text-center">
-                  <div className="text-lg font-semibold tabular-nums">{value}/10</div>
-                  <div className="text-[11px] text-muted-foreground">{label}</div>
-                </div>
-              ))}
+              )
+                .filter(([, value]) => value !== null)
+                .map(([label, value]) => (
+                  <div key={label} className="rounded-md border border-border p-2 text-center">
+                    <div className="text-lg font-semibold tabular-nums">{value}/10</div>
+                    <div className="text-[11px] text-muted-foreground">{label}</div>
+                  </div>
+                ))}
             </CardContent>
           </Card>
         )}
 
-        {/* MARKET */}
+        {/* MARKET (mock/LLM mode) */}
         {market && (
           <SectionCard title="Market">
             <p className="text-sm">{market.findings.summary}</p>
@@ -202,18 +224,50 @@ export default async function OpportunityDetailPage({
           </SectionCard>
         )}
 
-        {/* COMPETITORS */}
-        {competitor && (
+        {/* TREND (real/Apify mode) */}
+        {trend && (
+          <SectionCard title="Trend">
+            <p className="text-sm">{trend.findings.summary}</p>
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
+              <Metric label="Trend score" value={`${trend.findings.trendScore}/10`} />
+              <Metric
+                label="Price movement"
+                value={trend.findings.priceMovementPercent != null ? `${trend.findings.priceMovementPercent}%` : "—"}
+              />
+              <Metric label="Times seen" value={String(trend.findings.appearanceCount)} />
+              <Metric label="Orders at source" value={trend.findings.orderCount != null ? formatNumber(trend.findings.orderCount) : "—"} />
+            </div>
+          </SectionCard>
+        )}
+
+        {/* COMPETITORS — uses the CompetitorSighting rows, populated in both
+            modes, so real URLs/prices/match confidence render regardless of
+            which pipeline produced them. */}
+        {(competitorSummary || competitorSightings.length > 0) && (
           <SectionCard title="Competitors">
-            <p className="text-sm">{competitor.findings.summary}</p>
+            {competitorSummary && <p className="text-sm">{competitorSummary}</p>}
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {competitor.findings.competitors.map((c, i) => (
-                <div key={i} className="flex items-center justify-between rounded-md border border-border p-2 text-sm">
-                  <span>{c.name}</span>
-                  <span className="text-muted-foreground">{c.positioning}</span>
-                  <span className="tabular-nums font-medium">{formatEur(c.priceEur)}</span>
-                </div>
+              {competitorSightings.map((s) => (
+                <a
+                  key={s.id}
+                  href={s.url ?? undefined}
+                  target={s.url ? "_blank" : undefined}
+                  rel={s.url ? "noreferrer" : undefined}
+                  className={`flex items-center justify-between rounded-md border border-border p-2 text-sm ${s.url ? "hover:border-primary/40" : ""}`}
+                >
+                  <span className="truncate">{s.competitor.name}</span>
+                  {s.matchConfidence != null && (
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {Math.round(s.matchConfidence * 100)}% match
+                    </span>
+                  )}
+                  {s.positioning && <span className="shrink-0 text-muted-foreground">{s.positioning}</span>}
+                  {s.price != null && <span className="shrink-0 tabular-nums font-medium">{formatEur(s.price)}</span>}
+                </a>
               ))}
+              {competitorSightings.length === 0 && (
+                <p className="text-sm text-muted-foreground">No confidently-matched market listings found.</p>
+              )}
             </div>
           </SectionCard>
         )}
@@ -231,6 +285,21 @@ export default async function OpportunityDetailPage({
               />
               <Metric label="Quality score" value={`${supplier.findings.supplierQualityScore}/10`} />
             </div>
+            {product.sources.length > 0 && (
+              <div className="mt-3 space-y-1 border-t border-border pt-3 text-sm">
+                {product.sources.map((s) => (
+                  <div key={s.id} className="flex items-center justify-between gap-2">
+                    <span className="truncate text-muted-foreground">{s.supplier.name}</span>
+                    <span className="tabular-nums font-medium">{formatEur(s.price)}</span>
+                    {s.url && (
+                      <a href={s.url} target="_blank" rel="noreferrer" className="shrink-0 text-xs text-primary hover:underline">
+                        view source
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </SectionCard>
         )}
 

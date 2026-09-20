@@ -16,7 +16,9 @@ export async function getCostOverview() {
         id: true,
         startedAt: true,
         status: true,
+        mode: true,
         spendEur: true,
+        apifySpendUsd: true,
         deepResearchedCount: true,
         highPotentialCount: true,
       },
@@ -38,5 +40,32 @@ export async function getCostOverview() {
     totalCalls,
     costPerShortlisted: totalShortlisted > 0 ? totalRunSpend / totalShortlisted : 0,
     costPerHighPotential: totalHighPotential > 0 ? totalRunSpend / totalHighPotential : 0,
+  };
+}
+
+function startOfTodayUtc(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+export async function getApifyCostOverview() {
+  const [byPurpose, spentToday, byActor] = await Promise.all([
+    prisma.apifyCall.groupBy({ by: ["purpose"], _sum: { actualCostUsd: true }, _count: { _all: true } }),
+    prisma.apifyCall.aggregate({
+      where: { startedAt: { gte: startOfTodayUtc() } },
+      _sum: { actualCostUsd: true },
+    }),
+    prisma.apifyCall.groupBy({ by: ["actorId"], _sum: { actualCostUsd: true }, _count: { _all: true } }),
+  ]);
+
+  const totalSpendUsd = byPurpose.reduce((sum, p) => sum + Number(p._sum.actualCostUsd ?? 0), 0);
+  const totalCalls = byPurpose.reduce((sum, p) => sum + p._count._all, 0);
+
+  return {
+    byPurpose,
+    byActor,
+    spentTodayUsd: Number(spentToday._sum.actualCostUsd ?? 0),
+    totalSpendUsd,
+    totalCalls,
   };
 }

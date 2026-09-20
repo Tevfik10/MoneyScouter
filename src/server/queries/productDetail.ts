@@ -10,6 +10,7 @@ export async function getProductDetail(productId: string) {
   const latestScore = await prisma.score.findFirst({
     where: { productId },
     orderBy: { createdAt: "desc" },
+    include: { researchRun: { select: { mode: true } } },
   });
 
   const agentResults = latestScore
@@ -32,9 +33,33 @@ export async function getProductDetail(productId: string) {
       })
     : [];
 
+  const apifyCalls = latestScore
+    ? await prisma.apifyCall.findMany({
+        where: { researchRunId: latestScore.researchRunId },
+        orderBy: { startedAt: "asc" },
+      })
+    : [];
+
+  const competitorSightings = latestScore
+    ? await prisma.competitorSighting.findMany({
+        where: { productId, researchRunId: latestScore.researchRunId },
+        include: { competitor: true },
+        orderBy: { matchConfidence: "desc" },
+      })
+    : [];
+
   const watchlistEntry = await prisma.watchlist.findUnique({ where: { productId } });
 
-  return { product, latestScore, agentResults, decisions, aiCalls, watchlistEntry };
+  return {
+    product,
+    latestScore,
+    agentResults,
+    decisions,
+    aiCalls,
+    apifyCalls,
+    competitorSightings,
+    watchlistEntry,
+  };
 }
 
 export type ProductDetail = NonNullable<Awaited<ReturnType<typeof getProductDetail>>>;
