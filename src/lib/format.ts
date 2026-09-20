@@ -20,6 +20,19 @@ export function formatEurPrecise(value: Numeric): string {
   return formatEur(value, 4);
 }
 
+export function formatUsd(value: Numeric, maximumFractionDigits = 2): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits,
+    minimumFractionDigits: maximumFractionDigits === 0 ? 0 : 2,
+  }).format(toNumber(value));
+}
+
+export function formatUsdPrecise(value: Numeric): string {
+  return formatUsd(value, 4);
+}
+
 export function formatNumber(value: Numeric): string {
   return new Intl.NumberFormat("nl-NL").format(toNumber(value));
 }
@@ -33,7 +46,7 @@ export function formatRelativeToNow(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
   const diffMs = d.getTime() - Date.now();
   const diffMin = Math.round(diffMs / 60000);
-  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  const rtf = new Intl.RelativeTimeFormat("nl-NL", { numeric: "auto" });
   if (Math.abs(diffMin) < 60) return rtf.format(diffMin, "minute");
   const diffHr = Math.round(diffMin / 60);
   if (Math.abs(diffHr) < 24) return rtf.format(diffHr, "hour");

@@ -14,22 +14,24 @@ export function RunScoutButton() {
       disabled={isPending}
       onClick={() => {
         startTransition(async () => {
-          toast.info("Scout run started… discovering, filtering and researching products.");
+          toast.info("Zoekronde gestart… echte productdata, geen AI-kosten.");
           try {
             const result = await runScoutAction();
             if (result.status === "BUDGET_STOPPED") {
-              toast.warning("Run stopped: daily AI budget reached.");
+              toast.warning("Zoekronde gestopt: dagelijkse Apify-budgetlimiet is bereikt.");
+            } else if (result.status === "FAILED") {
+              toast.error("Zoekronde mislukt — bekijk Zoekrondes voor details.");
             } else {
-              toast.success("Scout run complete.");
+              toast.success("Zoekronde voltooid.");
             }
           } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Run failed.");
+            toast.error(err instanceof Error ? err.message : "Zoekronde mislukt.");
           }
         });
       }}
     >
       {isPending ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
-      Run Scout
+      Start zoekronde
     </Button>
   );
 }

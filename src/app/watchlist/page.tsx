@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { Eye } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { moneyScoreColorClass } from "@/components/verdict-badge";
+import { MoneyScoreGauge } from "@/components/money-score-gauge";
+import { EmptyState } from "@/components/empty-state";
 import { formatDateTime } from "@/lib/format";
 import { prisma } from "@/server/db";
 
@@ -16,30 +18,28 @@ export default async function WatchlistPage() {
   return (
     <div>
       <PageHeader
-        title="Watchlist"
-        description="Not interesting yet — monitored for price, trend or competition changes."
+        title="Volglijst"
+        description="Nog niet interessant genoeg — wordt gevolgd op prijs-, trend- of concurrentiewijzigingen."
       />
       <div className="space-y-3 p-6">
         {entries.length === 0 && (
-          <Card>
-            <CardContent className="py-16 text-center text-sm text-muted-foreground">
-              Nothing on the watchlist right now.
-            </CardContent>
-          </Card>
+          <EmptyState
+            icon={Eye}
+            title="Nog niets op de volglijst"
+            description="Producten die het net niet halen, maar de moeite waard blijven om te volgen, verschijnen hier automatisch."
+          />
         )}
         {entries.map((e) => (
           <Link key={e.id} href={`/opportunities/${e.productId}`}>
-            <Card className="transition-colors hover:border-primary/40">
+            <Card className="card-elevated transition-colors hover:border-primary/40">
               <CardContent className="flex items-center justify-between gap-4 py-4">
                 <div>
                   <div className="font-medium">{e.product.title}</div>
                   <div className="text-xs text-muted-foreground">{e.reason}</div>
                 </div>
                 <div className="flex items-center gap-4 text-right">
-                  <div className={`text-xl font-bold tabular-nums ${moneyScoreColorClass(e.product.currentScore ?? 0)}`}>
-                    {e.product.currentScore ?? "—"}
-                  </div>
-                  <div className="text-xs text-muted-foreground">added {formatDateTime(e.addedAt)}</div>
+                  <MoneyScoreGauge score={e.product.currentScore ?? 0} size="sm" />
+                  <div className="text-xs text-muted-foreground">toegevoegd {formatDateTime(e.addedAt)}</div>
                 </div>
               </CardContent>
             </Card>

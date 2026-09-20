@@ -12,6 +12,8 @@ export interface DiscoveredProductSource {
   url?: string;
   price: number;
   currency: string;
+  oldPrice?: number;
+  discountPercent?: number;
   shippingCost?: number;
   shippingDays?: number;
   moq?: number;
@@ -19,6 +21,8 @@ export interface DiscoveredProductSource {
   orderCount?: number;
   rating?: number;
   weightGrams?: number;
+  /** Full raw item as returned by the provider, for anything without a dedicated field. */
+  raw?: unknown;
 }
 
 export interface DiscoveredProduct {

@@ -41,6 +41,14 @@ export async function getMarginSnapshot(
   return { sellingPriceEur: findings.sellingPriceEur, marginPercent: findings.scenarios.base.marginPercent };
 }
 
+export async function getAverageMoneyScore(runId: string): Promise<number | null> {
+  const result = await prisma.score.aggregate({
+    where: { researchRunId: runId },
+    _avg: { moneyScore: true },
+  });
+  return result._avg.moneyScore ?? null;
+}
+
 export async function getRunVerdictCounts(runId: string) {
   const grouped = await prisma.score.groupBy({
     by: ["verdict"],

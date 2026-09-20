@@ -57,6 +57,8 @@ export async function upsertDiscoveredProduct(discovered: DiscoveredProduct): Pr
             url: discovered.source.url,
             price: discovered.source.price,
             currency: discovered.source.currency,
+            oldPrice: discovered.source.oldPrice,
+            discountPercent: discovered.source.discountPercent,
             shippingCost: discovered.source.shippingCost,
             shippingDays: discovered.source.shippingDays,
             moq: discovered.source.moq,
@@ -64,6 +66,7 @@ export async function upsertDiscoveredProduct(discovered: DiscoveredProduct): Pr
             orderCount: discovered.source.orderCount,
             rating: discovered.source.rating,
             weightGrams: discovered.source.weightGrams,
+            raw: discovered.source.raw as object | undefined,
           },
         },
       },
@@ -77,7 +80,10 @@ export async function upsertDiscoveredProduct(discovered: DiscoveredProduct): Pr
   }
 
   const product = existingFingerprint.product;
-  await prisma.product.update({ where: { id: product.id }, data: { lastSeenAt: new Date() } });
+  await prisma.product.update({
+    where: { id: product.id },
+    data: { lastSeenAt: new Date(), timesSeen: { increment: 1 } },
+  });
 
   const existingSource = product.sources.find(
     (s) =>
@@ -98,6 +104,8 @@ export async function upsertDiscoveredProduct(discovered: DiscoveredProduct): Pr
         url: discovered.source.url,
         price: discovered.source.price,
         currency: discovered.source.currency,
+        oldPrice: discovered.source.oldPrice,
+        discountPercent: discovered.source.discountPercent,
         shippingCost: discovered.source.shippingCost,
         shippingDays: discovered.source.shippingDays,
         moq: discovered.source.moq,
@@ -105,6 +113,7 @@ export async function upsertDiscoveredProduct(discovered: DiscoveredProduct): Pr
         orderCount: discovered.source.orderCount,
         rating: discovered.source.rating,
         weightGrams: discovered.source.weightGrams,
+        raw: discovered.source.raw as object | undefined,
       },
     });
     await prisma.priceHistory.create({ data: { productSourceId: created.id, price: discovered.source.price } });
@@ -119,9 +128,12 @@ export async function upsertDiscoveredProduct(discovered: DiscoveredProduct): Pr
       where: { id: existingSource.id },
       data: {
         price: newPrice,
+        oldPrice: discovered.source.oldPrice,
+        discountPercent: discovered.source.discountPercent,
         rating: discovered.source.rating,
         reviewCount: discovered.source.reviewCount,
         orderCount: discovered.source.orderCount,
+        raw: discovered.source.raw as object | undefined,
       },
     });
     await prisma.priceHistory.create({ data: { productSourceId: existingSource.id, price: newPrice } });
