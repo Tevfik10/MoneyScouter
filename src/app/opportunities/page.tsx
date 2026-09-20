@@ -34,7 +34,7 @@ export default async function OpportunitiesPage() {
               return (
                 <Link key={product.id} href={`/opportunities/${product.id}`} className="group">
                   <Card className="card-elevated h-full overflow-hidden transition-colors group-hover:border-primary/40">
-                    <div className="relative flex aspect-[4/3] items-center justify-center bg-muted/40">
+                    <div className="relative flex aspect-[21/9] items-center justify-center bg-muted/40 sm:aspect-[4/3]">
                       {product.imageUrl ? (
                         <Image
                           src={product.imageUrl}

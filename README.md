@@ -18,17 +18,24 @@ Requires a local PostgreSQL instance.
 
 ```bash
 pnpm install
-cp .env.example .env   # set DATABASE_URL (and DIRECT_URL — see below)
+cp .env.example .env   # set DATABASE_URL, DIRECT_URL and (optionally) APIFY_API_TOKEN
 pnpm exec prisma migrate deploy
-pnpm run db:seed        # runs one real Scout run to populate demo data
+pnpm run db:seed        # runs one demo (mock/LLM-free) Scout run to populate sample data
 pnpm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Click **Run Scout**
-on the Dashboard to trigger a new pipeline run at any time — it discovers,
-deduplicates, filters, enriches, shortlists, deep-researches (specialist
-agents + Skeptic + Judge) and scores products end to end, never exceeding
-the configured daily AI budget (see Settings).
+Open [http://localhost:3000](http://localhost:3000) — the UI is in Dutch.
+Two pipelines are available from the Dashboard ("Overzicht"):
+
+- **Start zoekronde** — the real pipeline: discovers products via Apify
+  (AliExpress + Google Shopping), dedupes, filters, shortlists and scores
+  them with deterministic, zero-AI agents. Requires `APIFY_API_TOKEN`.
+- **Demo uitvoeren (nagebootste data)** — the mock pipeline: no external
+  calls, no `APIFY_API_TOKEN` needed, safe to run anytime. This is what
+  `pnpm run db:seed` also uses.
+
+Neither pipeline calls OpenAI/Anthropic — see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full data flow.
 
 ## Environment variables
 
@@ -46,6 +53,11 @@ the configured daily AI budget (see Settings).
   most serverless platforms, including Vercel, can't reliably reach
   Supabase's direct connection over IPv6. The generated Prisma Client
   never uses this at runtime, only the CLI does at build/migration time.
+- `APIFY_API_TOKEN` — required only for the real pipeline ("Start
+  zoekronde"). Server-only: read in `src/server/providers/apify/client.ts`,
+  never sent to the browser or logged. Without it, a real run fails fast
+  with a clear error instead of silently discovering nothing; the demo
+  pipeline doesn't need it at all.
 
 ## Deploying (Vercel + Supabase)
 
