@@ -85,6 +85,71 @@ const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
   watchMin: 40,
 };
 
+// V1.1 — Apify budget, separate from the AI budget above (master spec
+// V1.1 section 13). Defaults match the spec exactly.
+const apifyBudgetSchema = z.object({
+  dailyTargetUsd: z.number().positive(),
+  hardLimitUsd: z.number().positive(),
+});
+export type ApifyBudgetSettings = z.infer<typeof apifyBudgetSchema>;
+const DEFAULT_APIFY_BUDGET: ApifyBudgetSettings = {
+  dailyTargetUsd: 1.0,
+  hardLimitUsd: 2.0,
+};
+
+// V1.1 — Scout run sizing. TEST_SCOUT is the safe default until manually
+// changed (master spec V1.1 section 15): small keyword count, capped
+// discovery volume, Google Shopping enrichment limited to the shortlist,
+// and its own tighter Apify spend cap for this run.
+const scoutConfigSchema = z.object({
+  testMode: z.boolean(),
+  maxKeywordsPerRun: z.number().int().min(1),
+  maxDiscoveryItemsTotal: z.number().int().min(1),
+  maxMarketEnrichmentItems: z.number().int().min(0),
+  testModeApifyBudgetCapUsd: z.number().positive(),
+});
+export type ScoutConfig = z.infer<typeof scoutConfigSchema>;
+const DEFAULT_SCOUT_CONFIG: ScoutConfig = {
+  testMode: true,
+  maxKeywordsPerRun: 3,
+  maxDiscoveryItemsTotal: 300,
+  maxMarketEnrichmentItems: 20,
+  testModeApifyBudgetCapUsd: 0.5,
+};
+
+// V1.1 — rule-based Judge rubric weights (master spec V1.1 section 11).
+// Deliberately separate from `scoringWeights` (the LLM_MOCK mode rubric,
+// which includes brandability/marketing-angle dimensions that don't apply
+// without an LLM). Suggested weights from the spec sum to 100, but the
+// Money Score formula normalizes by the actual weight sum regardless.
+const deterministicScoringWeightsSchema = z.object({
+  margin: z.number().min(0),
+  demand: z.number().min(0),
+  competition: z.number().min(0),
+  supplierQuality: z.number().min(0),
+  shipping: z.number().min(0),
+  marketPriceOpportunity: z.number().min(0),
+  trend: z.number().min(0),
+  operationalRisk: z.number().min(0),
+  highPotentialMin: z.number().min(0).max(100),
+  interestingMin: z.number().min(0).max(100),
+  watchMin: z.number().min(0).max(100),
+});
+export type DeterministicScoringWeights = z.infer<typeof deterministicScoringWeightsSchema>;
+const DEFAULT_DETERMINISTIC_SCORING_WEIGHTS: DeterministicScoringWeights = {
+  margin: 25,
+  demand: 20,
+  competition: 15,
+  supplierQuality: 10,
+  shipping: 10,
+  marketPriceOpportunity: 10,
+  trend: 5,
+  operationalRisk: 5,
+  highPotentialMin: 80,
+  interestingMin: 60,
+  watchMin: 40,
+};
+
 const shortlistSchema = z.object({
   enrichmentCutCount: z.number().int().min(1),
   enrichmentMinScore: z.number().min(0).max(100),
@@ -112,6 +177,13 @@ export const SETTINGS = {
     fallback: DEFAULT_SCORING_WEIGHTS,
   },
   shortlist: { key: "shortlist", schema: shortlistSchema, fallback: DEFAULT_SHORTLIST },
+  apifyBudget: { key: "apify_budget", schema: apifyBudgetSchema, fallback: DEFAULT_APIFY_BUDGET },
+  scoutConfig: { key: "scout_config", schema: scoutConfigSchema, fallback: DEFAULT_SCOUT_CONFIG },
+  deterministicScoringWeights: {
+    key: "deterministic_scoring_weights",
+    schema: deterministicScoringWeightsSchema,
+    fallback: DEFAULT_DETERMINISTIC_SCORING_WEIGHTS,
+  },
 } as const;
 
 export async function getSetting<T>(def: SettingDef<T>): Promise<T> {
@@ -131,11 +203,15 @@ export async function setSetting<T>(def: SettingDef<T>, value: T): Promise<void>
 }
 
 export async function getAllSettings() {
-  const [budget, filterThresholds, scoringWeights, shortlist] = await Promise.all([
-    getSetting(SETTINGS.budget),
-    getSetting(SETTINGS.filterThresholds),
-    getSetting(SETTINGS.scoringWeights),
-    getSetting(SETTINGS.shortlist),
-  ]);
-  return { budget, filterThresholds, scoringWeights, shortlist };
+  const [budget, filterThresholds, scoringWeights, shortlist, apifyBudget, scoutConfig, deterministicScoringWeights] =
+    await Promise.all([
+      getSetting(SETTINGS.budget),
+      getSetting(SETTINGS.filterThresholds),
+      getSetting(SETTINGS.scoringWeights),
+      getSetting(SETTINGS.shortlist),
+      getSetting(SETTINGS.apifyBudget),
+      getSetting(SETTINGS.scoutConfig),
+      getSetting(SETTINGS.deterministicScoringWeights),
+    ]);
+  return { budget, filterThresholds, scoringWeights, shortlist, apifyBudget, scoutConfig, deterministicScoringWeights };
 }
