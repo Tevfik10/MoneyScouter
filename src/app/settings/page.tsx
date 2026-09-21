@@ -7,12 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { getAllSettings } from "@/server/settings";
 import { prisma } from "@/server/db";
-import { ALIEXPRESS_PROVIDERS } from "@/server/providers/apify/aliexpress";
 import {
   updateApifyBudgetAction,
   updateBudgetAction,
   updateDeterministicScoringWeightsAction,
   updateFilterThresholdsAction,
+  updateInvestmentProfileAction,
   updateScoringWeightsAction,
   updateScoutConfigAction,
   updateShortlistAction,
@@ -81,22 +81,9 @@ export default async function SettingsPage() {
                 <Field label="Apify-limiet testmodus ($)" name="testModeApifyBudgetCapUsd" defaultValue={settings.scoutConfig.testModeApifyBudgetCapUsd} />
               </CardContent>
               <CardContent className="max-w-sm space-y-1">
-                <Label htmlFor="aliexpressProviderId" className="text-xs text-muted-foreground">
-                  AliExpress-databron
-                </Label>
-                <select
-                  id="aliexpressProviderId"
-                  name="aliexpressProviderId"
-                  defaultValue={settings.scoutConfig.aliexpressProviderId}
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
-                >
-                  {Object.values(ALIEXPRESS_PROVIDERS).map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.actorId} {provider.supportsBatching ? "(combineert zoektermen)" : "(één per zoekterm)"}
-                    </option>
-                  ))}
-                </select>
-                <Hint>Welke databron MoneyScouter gebruikt om AliExpress te doorzoeken.</Hint>
+                <Hint>
+                  Databron: Alibaba (B2B, met leveranciers-MOQ en prijsstaffels). AliExpress is niet meer actief.
+                </Hint>
               </CardContent>
               <CardContent className="pt-0">
                 <Button type="submit" size="sm">
@@ -237,15 +224,22 @@ export default async function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <form action={updateDeterministicScoringWeightsAction}>
-              <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <Field label="Marge" name="margin" defaultValue={settings.deterministicScoringWeights.margin} />
-                <Field label="Vraag" name="demand" defaultValue={settings.deterministicScoringWeights.demand} />
-                <Field label="Concurrentie" name="competition" defaultValue={settings.deterministicScoringWeights.competition} />
-                <Field label="Leverancierskwaliteit" name="supplierQuality" defaultValue={settings.deterministicScoringWeights.supplierQuality} />
-                <Field label="Verzending" name="shipping" defaultValue={settings.deterministicScoringWeights.shipping} />
+              <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <Field label="Verdienmodel (marge)" name="margin" defaultValue={settings.deterministicScoringWeights.margin} />
                 <Field label="Marktkans" name="marketPriceOpportunity" defaultValue={settings.deterministicScoringWeights.marketPriceOpportunity} />
-                <Field label="Trend / momentum" name="trend" defaultValue={settings.deterministicScoringWeights.trend} />
-                <Field label="Operationeel risico" name="operationalRisk" defaultValue={settings.deterministicScoringWeights.operationalRisk} />
+                <Field label="Vraagsignalen" name="demand" defaultValue={settings.deterministicScoringWeights.demand} />
+                <Field label="Concurrentie" name="competition" defaultValue={settings.deterministicScoringWeights.competition} />
+                <Field label="Leverancierskracht" name="supplierQuality" defaultValue={settings.deterministicScoringWeights.supplierQuality} />
+                <Field label="MOQ &amp; kapitaalefficiëntie" name="operationalEase" defaultValue={settings.deterministicScoringWeights.operationalEase} />
+                <Field label="Verzending &amp; logistiek" name="shipping" defaultValue={settings.deterministicScoringWeights.shipping} />
+                <Field label="Private-label potentieel" name="brandability" defaultValue={settings.deterministicScoringWeights.brandability} />
+                <Field label="Risico" name="risk" defaultValue={settings.deterministicScoringWeights.risk} />
+              </CardContent>
+              <CardContent className="pt-0">
+                <Hint>
+                  De negen onderdelen van de MoneyScore, elk met een eigen gewicht (optellend tot 100). &ldquo;Interessant om
+                  verder te onderzoeken&rdquo; — geen garantie voor omzet of winst.
+                </Hint>
               </CardContent>
               <CardContent className="grid grid-cols-3 gap-4 sm:max-w-md">
                 <Field label="Hoge potentie ≥" name="highPotentialMin" defaultValue={settings.deterministicScoringWeights.highPotentialMin} step="1" />
@@ -261,13 +255,105 @@ export default async function SettingsPage() {
           </Card>
         </div>
 
+        {/* PRODUCTCRITERIA, INKOOP & STARTKAPITAAL */}
+        <div>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Productcriteria, inkoop &amp; startkapitaal
+          </h2>
+          <Card className="card-elevated">
+            <CardHeader>
+              <CardTitle>Investeringsprofiel</CardTitle>
+              <CardDescription>
+                Waar MoneyScouter naar zoekt: verkoopprijsband, marge-eisen, gewenste MOQ en hoeveel startkapitaal een
+                product mag vragen. Gebruikt door de Marge-agent (landed cost, kapitaalefficiëntie) en de MoneyScore.
+              </CardDescription>
+            </CardHeader>
+            <form action={updateInvestmentProfileAction}>
+              <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <Field
+                  label="Min. verkoopprijs (€)"
+                  name="targetSellingPriceMinEur"
+                  defaultValue={settings.investmentProfile.targetSellingPriceMinEur}
+                />
+                <Field
+                  label="Max. verkoopprijs (€)"
+                  name="targetSellingPriceMaxEur"
+                  defaultValue={settings.investmentProfile.targetSellingPriceMaxEur}
+                />
+                <Field
+                  label="Max. inkoopkosten (% van verkoopprijs)"
+                  name="targetSupplierCostMaxPercent"
+                  defaultValue={settings.investmentProfile.targetSupplierCostMaxPercent}
+                />
+                <Field
+                  label="Min. gewenste brutomarge (€)"
+                  name="targetMinGrossMarginEur"
+                  defaultValue={settings.investmentProfile.targetMinGrossMarginEur}
+                />
+              </CardContent>
+              <CardContent className="pt-0">
+                <Hint>Verkoopprijsband en marge-eis waarop de zoekprofiel- en scoringlogica mikt.</Hint>
+              </CardContent>
+              <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <Field label="Voorkeurs-MOQ tot" name="preferredMoqMax" defaultValue={settings.investmentProfile.preferredMoqMax} step="1" />
+                <Field
+                  label="MOQ-strafgrens tot"
+                  name="moqPenaltyCeiling"
+                  defaultValue={settings.investmentProfile.moqPenaltyCeiling}
+                  step="1"
+                />
+                <Field
+                  label="MOQ harde strafgrens boven"
+                  name="moqHardPenaltyAbove"
+                  defaultValue={settings.investmentProfile.moqHardPenaltyAbove}
+                  step="1"
+                />
+              </CardContent>
+              <CardContent className="pt-0">
+                <Hint>
+                  Tot de voorkeursgrens: geen straf. Daarboven tot de strafgrens: wordt afgestraft, niet afgewezen.
+                  Boven de harde grens: sterk negatief, tenzij de economie uitzonderlijk goed is.
+                </Hint>
+              </CardContent>
+              <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <Field
+                  label="Voorkeurs-startkapitaal (€)"
+                  name="preferredInventoryCommitmentEur"
+                  defaultValue={settings.investmentProfile.preferredInventoryCommitmentEur}
+                />
+                <Field
+                  label="Acceptabel startkapitaal tot (€)"
+                  name="acceptableInventoryCommitmentMaxEur"
+                  defaultValue={settings.investmentProfile.acceptableInventoryCommitmentMaxEur}
+                />
+                <Field
+                  label="Maximaal startkapitaal (€)"
+                  name="maxInventoryCommitmentEur"
+                  defaultValue={settings.investmentProfile.maxInventoryCommitmentEur}
+                />
+              </CardContent>
+              <CardContent className="pt-0">
+                <Hint>
+                  Startkapitaal = MOQ × geschatte landed cost. Boven het maximum wordt een product sterk afgestraft in
+                  de kapitaalefficiëntie-score.
+                </Hint>
+              </CardContent>
+              <CardContent className="pt-0">
+                <Button type="submit" size="sm">
+                  Investeringsprofiel opslaan
+                </Button>
+              </CardContent>
+            </form>
+          </Card>
+        </div>
+
         {/* ZOEKONDERWERPEN */}
         <div>
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Zoekonderwerpen</h2>
           <Card className="card-elevated">
             <CardHeader>
               <CardTitle>Onderwerpen &amp; zoektermen</CardTitle>
-              <CardDescription>Waar de echte Scout op zoekt bij AliExpress. Zet een onderwerp of term uit om hem over te slaan.</CardDescription>
+              <CardDescription>Waar de echte Scout op zoekt bij Alibaba. Zet een onderwerp of term uit om hem over te slaan.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {topics.length === 0 && (

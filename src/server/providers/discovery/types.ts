@@ -5,7 +5,7 @@
 // touching pipeline code — see docs/ARCHITECTURE.md section F.
 
 export interface DiscoveredProductSource {
-  supplierPlatform: string; // "aliexpress" | "alibaba" | "cjdropshipping" | "mock" | ...
+  supplierPlatform: string; // "aliexpress" (legacy/inactive) | "alibaba" | "cjdropshipping" | "mock" | ...
   supplierName: string;
   supplierExternalId: string;
   supplierProductId: string;
@@ -23,6 +23,23 @@ export interface DiscoveredProductSource {
   weightGrams?: number;
   /** Full raw item as returned by the provider, for anything without a dedicated field. */
   raw?: unknown;
+
+  // B2B/Alibaba sourcing fields — optional, only ever set by providers that
+  // actually expose them (e.g. the Alibaba adapter). Left undefined by
+  // consumer-marketplace providers (e.g. the legacy AliExpress adapter),
+  // never fabricated. See docs on ProductSource in schema.prisma.
+  moqUnit?: string;
+  priceMin?: number;
+  priceMax?: number;
+  priceTiers?: Array<{ minQuantity: number; maxQuantity: number | null; price: number; unit?: string }>;
+  certifications?: string[];
+  supplierCountry?: string;
+  supplierYearsOnPlatform?: number;
+  supplierVerified?: boolean;
+  supplierGold?: boolean;
+  supplierAssessed?: boolean;
+  supplierTradeAssurance?: boolean;
+  supplierResponseRatePercent?: number;
 }
 
 export interface DiscoveredProduct {
@@ -31,6 +48,10 @@ export interface DiscoveredProduct {
   description?: string;
   imageUrl?: string;
   source: DiscoveredProductSource;
+  /** Which configured search theme/keyword produced this discovery — see
+   * pipeline/searchKeywords.ts and Product.discoveryTheme/discoveryKeyword. */
+  discoveryTheme?: string;
+  discoveryKeyword?: string;
 }
 
 export interface DiscoveryParams {

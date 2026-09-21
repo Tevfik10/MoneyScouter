@@ -12,9 +12,9 @@ import { DiscoveredProduct } from "@/server/providers/discovery/types";
 
 const TEST_PLATFORM = "vitest-dedup";
 
-function item(overrides: Partial<DiscoveredProduct["source"]> = {}): DiscoveredProduct {
+function item(overrides: Partial<DiscoveredProduct["source"]> = {}, title = "Test Foldable Backpack"): DiscoveredProduct {
   return {
-    title: "Test Foldable Backpack",
+    title,
     category: "travel-bags",
     source: {
       supplierPlatform: TEST_PLATFORM,
@@ -93,11 +93,26 @@ describe("upsertDiscoveredProduct (integration)", () => {
     void first;
   });
 
-  it("treats a different supplierProductId as a distinct NEW product", async () => {
-    const a = await upsertDiscoveredProduct(item({ supplierProductId: "VITEST-SP-A" }));
-    const b = await upsertDiscoveredProduct(item({ supplierProductId: "VITEST-SP-B" }));
+  it("treats a different supplierProductId with an unrelated title as a distinct NEW product", async () => {
+    const a = await upsertDiscoveredProduct(item({ supplierProductId: "VITEST-SP-A" }, "Vitest Ceramic Kitchen Mug"));
+    const b = await upsertDiscoveredProduct(item({ supplierProductId: "VITEST-SP-B" }, "Vitest Outdoor Camping Chair"));
     expect(a.outcome).toBe("NEW");
     expect(b.outcome).toBe("NEW");
     expect(a.productId).not.toBe(b.productId);
+  });
+
+  it("treats a different supplierProductId with a confidently-matching title as the SAME product concept (NEW_OFFER)", async () => {
+    const a = await upsertDiscoveredProduct(
+      item({ supplierProductId: "VITEST-SP-CONCEPT-A", price: 12 }, "Vitest Concept Match Compression Travel Backpack"),
+    );
+    const b = await upsertDiscoveredProduct(
+      item({ supplierProductId: "VITEST-SP-CONCEPT-B", price: 15 }, "Vitest Concept Match Compression Travel Backpack Deluxe"),
+    );
+    expect(a.outcome).toBe("NEW");
+    expect(b.outcome).toBe("NEW_OFFER");
+    expect(b.productId).toBe(a.productId); // same concept, different supplier offer
+
+    const product = await prisma.product.findUnique({ where: { id: a.productId }, include: { sources: true } });
+    expect(product!.sources).toHaveLength(2);
   });
 });

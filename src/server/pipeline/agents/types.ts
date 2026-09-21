@@ -7,6 +7,21 @@ export interface ProductSourceSummary {
   rating: number;
   shippingDays: number;
   moq: number;
+  // Alibaba sourcing fields — undefined for suppliers/platforms that don't
+  // report them (e.g. mock/legacy AliExpress data). Never fabricated.
+  moqUnit?: string;
+  priceMin?: number;
+  priceMax?: number;
+  priceTiers?: Array<{ minQuantity: number; maxQuantity: number | null; price: number; unit?: string }>;
+  certifications?: string[];
+  supplierCountry?: string;
+  supplierYearsOnPlatform?: number;
+  supplierVerified?: boolean;
+  supplierGold?: boolean;
+  supplierAssessed?: boolean;
+  supplierTradeAssurance?: boolean;
+  supplierResponseRatePercent?: number;
+  conceptMatchConfidence?: number;
 }
 
 export interface ProductBundle {
@@ -15,15 +30,10 @@ export interface ProductBundle {
   category: string;
   description?: string | null;
   estimatedSellingPriceEur: number;
-  bestSource: {
-    supplierName: string;
-    priceEur: number;
+  bestSource: ProductSourceSummary & {
     shippingCostEur: number;
-    shippingDays: number;
-    rating: number;
     reviewCount: number;
     orderCount: number;
-    moq: number;
     weightGrams: number;
   };
   sources: ProductSourceSummary[];

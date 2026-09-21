@@ -1,53 +1,61 @@
 import { Verdict } from "@prisma/client";
 import { ProductBundle } from "@/server/pipeline/agents/types";
-import { MarginFindings } from "@/server/pipeline/agents/schemas";
-import { SupplierFindings } from "@/server/pipeline/agents/schemas";
+import { AlibabaMarginFindings } from "@/server/pipeline/agentsDeterministic/alibabaMargin";
+import { AlibabaSupplierFindings } from "@/server/pipeline/agentsDeterministic/alibabaSupplier";
 import { TrendFindings } from "@/server/pipeline/agentsDeterministic/trend";
 import { CompetitorFindings } from "@/server/pipeline/agentsDeterministic/competitor";
 import { RiskFindings } from "@/server/pipeline/agentsDeterministic/risk";
 import { DeterministicScoringWeights } from "@/server/settings";
-import { clamp } from "@/server/pipeline/agentsDeterministic/shared";
+import { clamp, round } from "@/server/pipeline/agentsDeterministic/shared";
 
-// Rule-based Judge (V1.1, zero AI) — master spec section 11. Every number
-// is a plain formula over the other agents' real, measured findings.
-// "No narrative AI output needed": the WHY/CONCERNS lines below are
-// assembled from the same rule evaluations that produced the score, in
-// the spec's own "+22/25 margin" format — never generated text.
+// Rule-based Judge — MoneyScore V2 (zero AI). Every number is a plain
+// formula over the other agents' real, measured findings. Nine weighted
+// dimensions (Unit economics, Market opportunity, Demand signals,
+// Competition, Supplier strength, MOQ/capital efficiency, Shipping/
+// logistics, Private-label potential, Risk) measure how INTERESTING a
+// product is for further investigation — never a guaranteed-sales or
+// guaranteed-profit claim. "No narrative AI output needed": the WHY/
+// CONCERNS lines below are assembled from the same rule evaluations that
+// produced the score, in the spec's own "+22/25 margin" format — never
+// generated text.
 
 export interface DeterministicRubricScores {
-  margin: number; // 0-10
-  demand: number;
+  margin: number; // 0-10 — Unit economics
+  marketPriceOpportunity: number; // Market opportunity
+  demand: number; // Demand signals
   competition: number;
-  supplierQuality: number;
-  shipping: number;
-  marketPriceOpportunity: number;
-  trend: number;
-  operationalRisk: number;
+  supplierQuality: number; // Supplier strength
+  operationalEase: number; // MOQ / capital efficiency
+  shipping: number; // Shipping / logistics
+  brandability: number; // Private-label potential
+  risk: number;
 }
 
 const RUBRIC_DIMENSIONS = [
   "margin",
+  "marketPriceOpportunity",
   "demand",
   "competition",
   "supplierQuality",
+  "operationalEase",
   "shipping",
-  "marketPriceOpportunity",
-  "trend",
-  "operationalRisk",
+  "brandability",
+  "risk",
 ] as const satisfies readonly (keyof DeterministicRubricScores)[];
 
 const DIMENSION_LABELS: Record<keyof DeterministicRubricScores, string> = {
-  margin: "margin",
-  demand: "demand",
-  competition: "competition",
-  supplierQuality: "supplier",
-  shipping: "shipping",
+  margin: "unit economics",
   marketPriceOpportunity: "market opportunity",
-  trend: "momentum",
-  operationalRisk: "risk",
+  demand: "demand signals",
+  competition: "competition",
+  supplierQuality: "supplier strength",
+  operationalEase: "MOQ/capital efficiency",
+  shipping: "shipping/logistics",
+  brandability: "private-label potential",
+  risk: "risk",
 };
 
-export function computeDemandScore(orderCount: number | null, reviewCount: number | null): number {
+export function computeDemandScore(orderCount: number | null, reviewCount: number | null, trendScore: number): number {
   const o = orderCount ?? 0;
   let score: number;
   if (o >= 10000) score = 10;
@@ -60,7 +68,13 @@ export function computeDemandScore(orderCount: number | null, reviewCount: numbe
   else score = 1;
 
   if ((reviewCount ?? 0) >= 500) score = Math.min(10, score + 1);
-  return clamp(score, 0, 10);
+  // Trend momentum (re-discovery cadence, price movement, order growth)
+  // conceptually belongs to "demand signals" rather than its own weighted
+  // dimension — blended in, not discarded. Score.trend is still persisted
+  // separately (see researchDeterministic.ts) so the raw signal stays
+  // visible on its own.
+  score = (score + trendScore) / 2;
+  return clamp(Math.round(score), 0, 10);
 }
 
 export function computeShippingScore(leadTimeDaysMax: number): number {
@@ -74,12 +88,9 @@ export function computeMarginScore(marginPercent: number): number {
   return clamp(Math.round((marginPercent / 50) * 10), 0, 10);
 }
 
-export function computeMarketPriceOpportunityScore(
-  purchasePriceEur: number,
-  medianMarketPriceEur: number | null,
-): number {
-  if (medianMarketPriceEur == null || medianMarketPriceEur <= 0 || purchasePriceEur <= 0) return 5; // unknown -> neutral
-  const markupPotential = (medianMarketPriceEur - purchasePriceEur) / purchasePriceEur;
+export function computeMarketPriceOpportunityScore(landedCostEur: number, medianMarketPriceEur: number | null): number {
+  if (medianMarketPriceEur == null || medianMarketPriceEur <= 0 || landedCostEur <= 0) return 5; // unknown -> neutral
+  const markupPotential = (medianMarketPriceEur - landedCostEur) / landedCostEur;
   if (markupPotential >= 3) return 10;
   if (markupPotential >= 2) return 8;
   if (markupPotential >= 1.5) return 6;
@@ -88,22 +99,36 @@ export function computeMarketPriceOpportunityScore(
   return 0;
 }
 
-export function computeOperationalRiskScore(
-  weightGrams: number,
-  moq: number,
-  returnRatePercent: number,
-): number {
-  let score = 8;
-  if (weightGrams > 4000) score -= 4;
-  else if (weightGrams > 2000) score -= 2;
-  if (moq > 5) score -= 1;
-  if (returnRatePercent > 15) score -= 2;
+/** score/100 -> score/10, the common conversion for the two sub-agent
+ * scores (Supplier Score, Capital Efficiency Score) that are already
+ * explainable 0-100 rubrics in their own right. */
+function scoreOutOf10(score100: number): number {
+  return clamp(Math.round(score100 / 10), 0, 10);
+}
+
+export function computeBrandabilityScore(privateLabelSignal: boolean, customizationSignal: boolean, supplierCount: number): number {
+  let score = 5; // neutral — no signal found either way, not a negative
+  if (privateLabelSignal) score += 3;
+  if (customizationSignal) score += 2;
+  if ((privateLabelSignal || customizationSignal) && supplierCount >= 3) score += 1; // more suppliers to negotiate private-label terms with
   return clamp(score, 0, 10);
 }
 
+export function computeRiskDimensionScore(risk: RiskFindings): number {
+  let score = 9; // low measured risk -> high score
+  if (risk.complianceRisk === "HIGH") score -= 5;
+  else if (risk.complianceRisk === "MEDIUM") score -= 2;
+  if (risk.ipRisk === "HIGH") score -= 4;
+  else if (risk.ipRisk === "MEDIUM") score -= 2;
+  if (risk.requiresHumanReview) score -= 2;
+  if (risk.flags.length > 4) score -= 1;
+  if (risk.returnRiskEstimatePercent > 20) score -= 1;
+  return clamp(round(score, 1), 0, 10);
+}
+
 export interface DeterministicJudgeInputs {
-  margin: MarginFindings;
-  supplier: SupplierFindings;
+  margin: AlibabaMarginFindings;
+  supplier: AlibabaSupplierFindings;
   competitor: CompetitorFindings;
   trend: TrendFindings;
   risk: RiskFindings;
@@ -113,22 +138,26 @@ export function computeDeterministicRubricScores(
   bundle: ProductBundle,
   inputs: DeterministicJudgeInputs,
 ): DeterministicRubricScores {
+  const leadTimeDaysMax =
+    bundle.sources.length > 0 ? Math.max(...bundle.sources.map((s) => s.shippingDays)) : bundle.bestSource.shippingDays;
+
   return {
-    margin: computeMarginScore(inputs.margin.scenarios.base.marginPercent),
-    demand: computeDemandScore(bundle.bestSource.orderCount, bundle.bestSource.reviewCount),
-    competition: clamp(10 - inputs.competitor.marketSaturationScore, 0, 10),
-    supplierQuality: clamp(Math.round(inputs.supplier.supplierQualityScore), 0, 10),
-    shipping: computeShippingScore(inputs.supplier.leadTimeDaysMax),
+    margin: computeMarginScore(inputs.margin.scenarios.expected.marginPercent),
     marketPriceOpportunity: computeMarketPriceOpportunityScore(
-      bundle.bestSource.priceEur,
+      inputs.margin.landedCost.totalLandedCostEur,
       inputs.competitor.medianMarketPriceEur,
     ),
-    trend: inputs.trend.trendScore,
-    operationalRisk: computeOperationalRiskScore(
-      bundle.bestSource.weightGrams,
-      bundle.bestSource.moq,
-      inputs.margin.returnRatePercent,
+    demand: computeDemandScore(bundle.bestSource.orderCount, bundle.bestSource.reviewCount, inputs.trend.trendScore),
+    competition: clamp(10 - inputs.competitor.marketSaturationScore, 0, 10),
+    supplierQuality: scoreOutOf10(inputs.supplier.supplierScore),
+    operationalEase: scoreOutOf10(inputs.margin.capitalEfficiencyScore),
+    shipping: computeShippingScore(leadTimeDaysMax),
+    brandability: computeBrandabilityScore(
+      inputs.supplier.privateLabelSignal,
+      inputs.supplier.customizationSignal,
+      inputs.supplier.supplierCount,
     ),
+    risk: computeRiskDimensionScore(inputs.risk),
   };
 }
 
@@ -156,8 +185,8 @@ export function verdictForScore(moneyScore: number, weights: DeterministicScorin
  * out of its configured weight (not out of 10), exactly the display the
  * spec's example shows. Every dimension gets a line so nothing is hidden;
  * `why` covers dimensions that carried their weight, `concerns` covers
- * ones that lost more than half of it, plus any Risk/Competitor/Trend
- * flags collected along the way.
+ * ones that lost more than half of it, plus any Risk/Competitor flags
+ * collected along the way.
  */
 export function buildDeterministicRubricLines(
   scores: DeterministicRubricScores,
@@ -195,12 +224,15 @@ export function runDeterministicJudge(
   const verdict = verdictForScore(moneyScore, weights);
   const { why, concerns } = buildDeterministicRubricLines(scores, weights);
 
-  // Fold in the concrete rule flags from Risk/Competitor/Trend, not just
-  // the rubric-line summary, so a HIGH compliance risk or zero-competitor-
-  // match situation is visible even if its dimension still scored midrange.
+  // Fold in the concrete rule flags from Risk/Competitor, not just the
+  // rubric-line summary, so a HIGH compliance risk or zero-competitor-match
+  // situation is visible even if its dimension still scored midrange.
   for (const flag of inputs.risk.flags) concerns.push(flag);
   if (inputs.competitor.competitorCount === 0) {
     concerns.push("no confidently-matched market listings found — price opportunity unverified");
+  }
+  if (inputs.risk.requiresHumanReview) {
+    concerns.push("flagged for human review — at least one risk signal needs a person's judgement before proceeding");
   }
 
   const nextStep =

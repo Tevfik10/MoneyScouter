@@ -90,7 +90,6 @@ export async function updateScoutConfigAction(formData: FormData) {
     maxDiscoveryItemsTotal: num(formData, "maxDiscoveryItemsTotal"),
     maxMarketEnrichmentItems: num(formData, "maxMarketEnrichmentItems"),
     testModeApifyBudgetCapUsd: num(formData, "testModeApifyBudgetCapUsd"),
-    aliexpressProviderId: String(formData.get("aliexpressProviderId") ?? "aliexpress-tortuga"),
   });
   revalidatePath("/settings");
   revalidatePath("/discover");
@@ -104,11 +103,28 @@ export async function updateDeterministicScoringWeightsAction(formData: FormData
     supplierQuality: num(formData, "supplierQuality"),
     shipping: num(formData, "shipping"),
     marketPriceOpportunity: num(formData, "marketPriceOpportunity"),
-    trend: num(formData, "trend"),
-    operationalRisk: num(formData, "operationalRisk"),
+    operationalEase: num(formData, "operationalEase"),
+    brandability: num(formData, "brandability"),
+    risk: num(formData, "risk"),
     highPotentialMin: num(formData, "highPotentialMin"),
     interestingMin: num(formData, "interestingMin"),
     watchMin: num(formData, "watchMin"),
+  });
+  revalidatePath("/settings");
+}
+
+export async function updateInvestmentProfileAction(formData: FormData) {
+  await setSetting(SETTINGS.investmentProfile, {
+    targetSellingPriceMinEur: num(formData, "targetSellingPriceMinEur"),
+    targetSellingPriceMaxEur: num(formData, "targetSellingPriceMaxEur"),
+    targetSupplierCostMaxPercent: num(formData, "targetSupplierCostMaxPercent"),
+    targetMinGrossMarginEur: num(formData, "targetMinGrossMarginEur"),
+    preferredMoqMax: num(formData, "preferredMoqMax"),
+    moqPenaltyCeiling: num(formData, "moqPenaltyCeiling"),
+    moqHardPenaltyAbove: num(formData, "moqHardPenaltyAbove"),
+    preferredInventoryCommitmentEur: num(formData, "preferredInventoryCommitmentEur"),
+    acceptableInventoryCommitmentMaxEur: num(formData, "acceptableInventoryCommitmentMaxEur"),
+    maxInventoryCommitmentEur: num(formData, "maxInventoryCommitmentEur"),
   });
   revalidatePath("/settings");
 }

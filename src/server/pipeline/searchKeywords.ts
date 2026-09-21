@@ -1,23 +1,44 @@
 import { prisma } from "@/server/db";
 
-// Configurable search-term system — master spec V1.1 section 4. Editable
-// from Settings; these are just the seeded starting point covering the
-// spec's example categories, explicitly avoiding regulated/high-risk
-// product categories.
+// Configurable search-theme system (Alibaba sourcing migration). Editable
+// from Settings; these are the seeded starting point. Deliberately
+// problem/use-case phrased rather than generic category names ("gadgets",
+// "electronics") — MoneyScouter is looking for scalable/private-label-
+// suitable products with real consumer benefit, not cheap random
+// electronics, and explicitly avoids regulated/high-risk categories.
 const DEFAULT_TOPICS: { name: string; keywords: string[] }[] = [
-  { name: "home", keywords: ["smart home organizer", "led motion sensor light", "foldable storage box"] },
-  { name: "kitchen", keywords: ["silicone kitchen gadget set", "vegetable chopper", "reusable food storage bags"] },
-  { name: "travel", keywords: ["travel packing cubes", "foldable travel backpack", "portable luggage scale"] },
-  { name: "fitness", keywords: ["resistance bands set", "adjustable dumbbell", "yoga mat non slip"] },
-  { name: "pets", keywords: ["dog harness no pull", "automatic pet feeder", "pet grooming glove"] },
-  { name: "car accessories", keywords: ["car trunk organizer", "car phone holder magnetic", "car seat gap filler"] },
-  { name: "organization", keywords: ["drawer organizer set", "cable management box", "closet organizer"] },
-  { name: "outdoor", keywords: ["camping hammock", "solar led string lights", "portable camping chair"] },
-  { name: "office", keywords: ["laptop stand adjustable", "desk cable organizer", "ergonomic wrist rest"] },
-  { name: "parenting", keywords: ["baby food storage containers", "kids travel organizer", "baby proofing kit"] },
-  { name: "beauty tools", keywords: ["facial roller jade", "led makeup mirror", "hair straightener brush"] },
-  { name: "hobby", keywords: ["diamond painting kit", "model building tool set", "sketch drawing kit"] },
-  { name: "gadgets", keywords: ["mini projector portable", "wireless charging station", "bluetooth tracker tag"] },
+  {
+    name: "home-organization",
+    keywords: ["collapsible storage organizer", "under bed storage box", "kitchen drawer organizer set"],
+  },
+  {
+    name: "travel",
+    keywords: ["travel packing cubes set", "luggage organizer accessories", "compression travel bag"],
+  },
+  {
+    name: "fitness-recovery",
+    keywords: ["resistance bands set", "muscle recovery foam roller", "yoga mat non slip"],
+  },
+  {
+    name: "pets",
+    keywords: ["dog travel carrier bag", "pet grooming brush set", "pet food storage container"],
+  },
+  {
+    name: "car",
+    keywords: ["car trunk organizer", "car seat back organizer", "car interior cleaning kit"],
+  },
+  {
+    name: "work-productivity",
+    keywords: ["desk cable management organizer", "ergonomic laptop stand", "home office storage organizer"],
+  },
+  {
+    name: "parents-family",
+    keywords: ["kids travel organizer bag", "baby travel storage bag", "family closet organizer set"],
+  },
+  {
+    name: "outdoor",
+    keywords: ["camping storage organizer", "portable outdoor gear organizer", "outdoor travel backpack"],
+  },
 ];
 
 export async function ensureDefaultSearchTopics(): Promise<void> {

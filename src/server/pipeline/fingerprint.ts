@@ -29,6 +29,34 @@ export function computeFingerprint(source: Pick<DiscoveredProductSource, "suppli
   return crypto.createHash("sha256").update(key).digest("hex");
 }
 
+const CONCEPT_MATCH_MIN_TOKEN_LENGTH = 3;
+
+function tokenize(title: string): Set<string> {
+  return new Set(normalizeTitle(title).split(" ").filter((t) => t.length >= CONCEPT_MATCH_MIN_TOKEN_LENGTH));
+}
+
+/**
+ * Jaccard token-overlap between two normalized titles, 0-1 — the same
+ * technique used to fuzzy-match Google Shopping listings against a
+ * product (agentsDeterministic/competitor.ts), reused here for a much
+ * higher-stakes decision: whether two DIFFERENT suppliers' listings are
+ * the same PRODUCT CONCEPT and should share one Product row (see
+ * dedup.ts). Never claim certainty — the caller applies a stricter
+ * threshold than the market-listing use case precisely because a wrong
+ * merge here is worse than a missed one.
+ */
+export function titleConceptMatchConfidence(a: string, b: string): number {
+  const tokensA = tokenize(a);
+  const tokensB = tokenize(b);
+  if (tokensA.size === 0 || tokensB.size === 0) return 0;
+  let intersection = 0;
+  for (const t of tokensA) if (tokensB.has(t)) intersection++;
+  const union = tokensA.size + tokensB.size - intersection;
+  return union === 0 ? 0 : Math.round((intersection / union) * 1000) / 1000;
+}
+
+export const CONCEPT_MATCH_MIN_CONFIDENCE = 0.5;
+
 export const PRICE_CHANGE_THRESHOLD_PERCENT = 5;
 
 export function priceChangePercent(oldPrice: number, newPrice: number): number {

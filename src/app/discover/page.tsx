@@ -9,7 +9,7 @@ import { getApifyBudgetSnapshot } from "@/server/queries/apify";
 import { getAllSettings } from "@/server/settings";
 import { formatNumber, formatUsd } from "@/lib/format";
 import { prisma } from "@/server/db";
-import { getAliExpressProvider, ALIEXPRESS_PROVIDERS } from "@/server/providers/apify/aliexpress";
+import { alibabaApifyProvider } from "@/server/providers/apify/alibaba/provider";
 import { GOOGLE_SHOPPING_ACTOR_ID } from "@/server/providers/apify/googleShopping/provider";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +34,6 @@ export default async function DiscoverPage() {
     }),
   ]);
   const hasApifyToken = !!process.env.APIFY_API_TOKEN;
-  const activeAliExpressProvider = getAliExpressProvider(settings.scoutConfig.aliexpressProviderId);
 
   return (
     <div>
@@ -70,29 +69,30 @@ export default async function DiscoverPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Echte databronnen (Apify)</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {Object.values(ALIEXPRESS_PROVIDERS).map((provider) => (
-              <div key={provider.id} className="flex items-center justify-between rounded-md border border-border p-3">
-                <div>
-                  <div className="font-medium">
-                    {provider.actorId}
-                    {provider.id === activeAliExpressProvider.id && (
-                      <Badge variant="secondary" className="ml-2 font-normal">
-                        actief
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Zoeken naar producten — echte AliExpress-zoekresultaten, omgezet naar producten en ontdubbeld.{" "}
-                    {provider.supportsBatching
-                      ? "Doorzoekt alle ingestelde zoektermen in één keer."
-                      : "Eén zoekactie per zoekterm (kan niet combineren)."}
-                  </div>
+            <div className="flex items-center justify-between rounded-md border border-border p-3">
+              <div>
+                <div className="font-medium">
+                  {alibabaApifyProvider.actorId}
+                  <Badge variant="secondary" className="ml-2 font-normal">
+                    actief
+                  </Badge>
                 </div>
-                <Badge variant={hasApifyToken ? "default" : "outline"}>
-                  {hasApifyToken ? "gekoppeld" : "Apify-koppeling ontbreekt"}
-                </Badge>
+                <div className="text-xs text-muted-foreground">
+                  Zoeken naar leveranciers — echte Alibaba-zoekresultaten (B2B), omgezet naar productconcepten met
+                  leveranciersaanbiedingen en ontdubbeld.{" "}
+                  {alibabaApifyProvider.supportsBatching
+                    ? "Doorzoekt alle ingestelde zoektermen in één keer."
+                    : "Eén zoekactie per zoekterm (kan niet combineren)."}
+                </div>
               </div>
-            ))}
+              <Badge variant={hasApifyToken ? "default" : "outline"}>
+                {hasApifyToken ? "gekoppeld" : "Apify-koppeling ontbreekt"}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              AliExpress is niet meer actief in de zoekpijplijn — Alibaba (B2B, met leveranciersgegevens en MOQ) is
+              de enige actieve bron voor productontdekking.
+            </p>
             <div className="flex items-center justify-between rounded-md border border-border p-3">
               <div>
                 <div className="font-medium">{GOOGLE_SHOPPING_ACTOR_ID}</div>

@@ -2,7 +2,7 @@ import { ProductStatus, RunStatus, Verdict } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { getAllSettings } from "@/server/settings";
 import { ensureDefaultSearchTopics, markKeywordUsed, selectSearchKeywords } from "@/server/pipeline/searchKeywords";
-import { getAliExpressProvider } from "@/server/providers/apify/aliexpress";
+import { alibabaApifyProvider } from "@/server/providers/apify/alibaba/provider";
 import { upsertDiscoveredProduct } from "@/server/pipeline/dedup";
 import { classifyComplianceRisk, ComplianceRiskLevel, runDeterministicFilter } from "@/server/pipeline/filter";
 import { computeEnrichmentScore } from "@/server/pipeline/enrichment";
@@ -137,11 +137,10 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
     if (keywords.length === 0) {
       throw new Error("No search keywords are configured — add SearchTopic/SearchKeyword rows or check Settings.");
     }
-    const aliexpressProvider = getAliExpressProvider(scoutConfig.aliexpressProviderId);
-
-    // --- Steps 2-4: AliExpress discovery (one Actor run for all
-    // keywords when the provider supports batching), normalize (inside
-    // the provider), ingest ---------------------------------------------
+    // --- Steps 2-4: Alibaba discovery (one Actor run for all keywords —
+    // ALIBABA is the sole active product-discovery source, see
+    // providers/apify/aliexpress/LEGACY.md for why AliExpress is inactive),
+    // normalize (inside the provider), ingest ----------------------------
     const scoutStageStart = new Date();
     let discovered: DiscoveredProduct[] = [];
     let scoutError: string | undefined;
@@ -149,12 +148,10 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
     let discoveryStopReason: string | undefined;
 
     try {
-      const searchResult = await aliexpressProvider.search(
+      const searchResult = await alibabaApifyProvider.search(
         {
-          keywords: keywords.map((k) => ({ keyword: k.keyword, category: k.topicName })),
+          keywords: keywords.map((k) => ({ keyword: k.keyword, theme: k.topicName, category: k.topicName })),
           maxItemsTotal: maxDiscoveryItemsTotal,
-          region: "nl",
-          shipTo: "NL",
         },
         { researchRunId: run.id, costController: apifyCostController },
       );
@@ -180,7 +177,7 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
       }
     } catch (err) {
       scoutError = err instanceof Error ? err.message : String(err);
-      console.error("[runScoutReal] AliExpress discovery failed:", err);
+      console.error("[runScoutReal] Alibaba discovery failed:", err);
     }
 
     await recordPipelineStage({
@@ -188,7 +185,7 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
       stage: "SCOUT",
       startedAt: scoutStageStart,
       itemsProcessed: discovered.length,
-      dataSource: `apify:${aliexpressProvider.actorId}`,
+      dataSource: `apify:${alibabaApifyProvider.actorId}`,
       errorMessage: scoutError ?? discoveryStopReason,
     });
 
@@ -227,10 +224,10 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
           category: d.item.category,
           purchasePriceEur: d.item.source.price,
           shippingCostEur: d.item.source.shippingCost ?? 0,
-          // Real AliExpress search results don't carry shipping days or
-          // weight (documented gap — see AliExpress adapter). An unknown
-          // value defaults to the threshold itself: neutral, never
-          // rejecting a product for data we simply don't have.
+          // Alibaba search results don't carry shipping days or weight at
+          // discovery time (documented gap — see the Alibaba normalizer).
+          // An unknown value defaults to the threshold itself: neutral,
+          // never rejecting a product for data we simply don't have.
           shippingDays: d.item.source.shippingDays ?? settings.filterThresholds.maxShippingDays,
           supplierRating: d.item.source.rating ?? settings.filterThresholds.minSupplierRating,
           reviewCount: d.item.source.reviewCount ?? settings.filterThresholds.minReviewCount,
@@ -367,7 +364,7 @@ export async function runScoutReal(options: RunScoutRealOptions = {}): Promise<R
           productSourceId,
           run.id,
           apifyCostController,
-          p.complianceRisk,
+          settings.investmentProfile,
           settings.deterministicScoringWeights,
           settings.filterThresholds,
           marketEnrichmentExhausted,
