@@ -152,6 +152,14 @@ model Product {
   status          ProductStatus  @default(DISCOVERED)
   complianceRisk  ComplianceRisk @default(LOW)
 
+  // Which configured search theme/keyword first caused this product
+  // concept to be discovered — denormalized onto the concept (not each
+  // supplier offer) since discovery reason is a concept-level fact. Null
+  // for products discovered before this was tracked. See
+  // pipeline/searchKeywords.ts.
+  discoveryTheme   String?
+  discoveryKeyword String?
+
   // Denormalized "latest known" values for fast list/dashboard queries.
   // Always derivable from Score/Decision history — kept in sync by the
   // pipeline, never hand-edited.
@@ -185,11 +193,22 @@ model Product {
 model Supplier {
   id         String   @id @default(cuid())
   name       String
-  platform   String // "aliexpress" | "alibaba" | "cjdropshipping" | "other"
+  platform   String // "aliexpress" (legacy/inactive) | "alibaba" | "cjdropshipping" | "other"
   externalId String?
   rating     Float?
   url        String?
   createdAt  DateTime @default(now())
+
+  // Alibaba sourcing fields (master spec: Alibaba migration) — null/unknown
+  // for suppliers from platforms that don't report them (e.g. legacy
+  // AliExpress rows). Never fabricated when the source doesn't expose them.
+  country             String?
+  yearsOnPlatform     Int?
+  verified            Boolean?
+  goldSupplier        Boolean?
+  assessedSupplier    Boolean?
+  tradeAssurance      Boolean?
+  responseRatePercent Float?
 
   sources ProductSource[]
 
@@ -217,6 +236,22 @@ model ProductSource {
   rating          Float?
   weightGrams     Int?
   raw             Json? // full raw item as returned by the provider, for fields we don't have a dedicated column for
+
+  // Alibaba sourcing fields — B2B listings quote a price range and MOQ
+  // unit rather than a single consumer price. `price`/`moq` above keep
+  // holding the "best case" (priceMin / minOrderQuantity) so every existing
+  // query (dedup, filter, dashboards) keeps working unchanged; these add
+  // the fuller picture where the source actually provides it.
+  moqUnit                String? // e.g. "pieces", "sets"
+  priceMin               Decimal?
+  priceMax               Decimal?
+  priceTiers             Json? // [{ minQuantity, maxQuantity, price, unit }], quantity-break ladder if exposed
+  certifications         Json? // string[], e.g. ["CE", "RoHS"] — only what the source actually reports
+  // How confident the (fuzzy) title+category match is that this offer is
+  // the same PRODUCT CONCEPT as the Product it's attached to, 0-1, null
+  // when this offer defined the concept itself (nothing to match against).
+  // Never presented as certain — see dedup.ts.
+  conceptMatchConfidence Float?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

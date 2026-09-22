@@ -22,13 +22,27 @@ import {
   CompetitorFindings,
   MarginFindings,
   MarketFindings,
-  RiskFindings,
   SkepticFindings,
   SupplierFindings,
 } from "@/server/pipeline/agents/schemas";
 import { TrendFindings } from "@/server/pipeline/agentsDeterministic/trend";
 import { CompetitorFindings as DeterministicCompetitorFindings } from "@/server/pipeline/agentsDeterministic/competitor";
+import { AlibabaMarginFindings } from "@/server/pipeline/agentsDeterministic/alibabaMargin";
+import { AlibabaSupplierFindings } from "@/server/pipeline/agentsDeterministic/alibabaSupplier";
 import { DeterministicScoringWeights } from "@/server/settings";
+
+// Risk findings' exact shape differs between the mock/LLM pipeline
+// (agents/schemas.ts, lowercase enum) and the real/Apify pipeline
+// (agentsDeterministic/risk.ts, uppercase enum, adds requiresHumanReview)
+// — this page only ever displays the fields both share, so a minimal
+// structural type avoids importing two colliding `RiskFindings` names.
+interface DisplayRiskFindings {
+  complianceRisk: string;
+  ipRisk: string;
+  returnRiskEstimatePercent: number;
+  flags: string[];
+  requiresHumanReview?: boolean;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -42,27 +56,29 @@ function findAgent<T>(
 }
 
 const DETERMINISTIC_DIMENSION_LABELS_NL: Record<keyof DeterministicScoringWeights, string> = {
-  margin: "Marge",
-  demand: "Vraag",
-  competition: "Concurrentie",
-  supplierQuality: "Leverancier",
-  shipping: "Verzending",
+  margin: "Verdienmodel (marge)",
   marketPriceOpportunity: "Marktkans",
-  trend: "Momentum",
-  operationalRisk: "Risico",
+  demand: "Vraagsignalen",
+  competition: "Concurrentie",
+  supplierQuality: "Leverancierskracht",
+  operationalEase: "MOQ & kapitaalefficiëntie",
+  shipping: "Verzending & logistiek",
+  brandability: "Private-label potentieel",
+  risk: "Risico",
   highPotentialMin: "highPotentialMin",
   interestingMin: "interestingMin",
   watchMin: "watchMin",
 };
 const DETERMINISTIC_DIMENSIONS = [
   "margin",
+  "marketPriceOpportunity",
   "demand",
   "competition",
   "supplierQuality",
+  "operationalEase",
   "shipping",
-  "marketPriceOpportunity",
-  "trend",
-  "operationalRisk",
+  "brandability",
+  "risk",
 ] as const;
 
 const MOCK_DIMENSION_LABELS_NL: Record<string, string> = {
@@ -96,12 +112,24 @@ export default async function OpportunityDetailPage({
   const trend = findAgent<TrendFindings>(agentResults, AgentType.TREND);
   const competitorRaw = findAgent<CompetitorFindings | DeterministicCompetitorFindings>(agentResults, AgentType.COMPETITOR);
   const competitorSummary = competitorRaw?.findings.summary;
-  const supplier = findAgent<SupplierFindings>(agentResults, AgentType.SUPPLIER);
-  const margin = findAgent<MarginFindings>(agentResults, AgentType.MARGIN);
+  const marginRaw = findAgent<MarginFindings | AlibabaMarginFindings>(agentResults, AgentType.MARGIN);
+  const supplierRaw = findAgent<SupplierFindings | AlibabaSupplierFindings>(agentResults, AgentType.SUPPLIER);
   const brand = findAgent<BrandFindings>(agentResults, AgentType.BRAND);
   const angle = findAgent<AngleFindings>(agentResults, AgentType.ANGLE);
-  const risk = findAgent<RiskFindings>(agentResults, AgentType.RISK);
+  const risk = findAgent<DisplayRiskFindings>(agentResults, AgentType.RISK);
   const skeptic = findAgent<SkepticFindings>(agentResults, AgentType.SKEPTIC);
+
+  // Margin/Supplier findings have a different shape in the real/Alibaba
+  // pipeline (landed cost, capital efficiency, Supplier Score) than the
+  // mock/LLM one (buy price, bad/base/good scenarios) — never assume which
+  // one a given AgentResult row holds, detect it from a field unique to
+  // each shape, same pattern already used for Competitor below.
+  const detMargin = marginRaw && "landedCost" in marginRaw.findings ? (marginRaw.findings as AlibabaMarginFindings) : null;
+  const mockMargin = marginRaw && "buyPriceEur" in marginRaw.findings ? (marginRaw.findings as MarginFindings) : null;
+  const detSupplier =
+    supplierRaw && "supplierScore" in supplierRaw.findings ? (supplierRaw.findings as AlibabaSupplierFindings) : null;
+  const mockSupplier =
+    supplierRaw && "bestSupplier" in supplierRaw.findings ? (supplierRaw.findings as SupplierFindings) : null;
 
   const totalAiCostEur = aiCalls.reduce((sum, c) => sum + Number(c.estimatedCostEur), 0);
   const totalApifyCostUsd = apifyCalls.reduce((sum, c) => sum + Number(c.actualCostUsd ?? c.estimatedCostUsd), 0);
@@ -117,7 +145,7 @@ export default async function OpportunityDetailPage({
     competitorRaw && "priceRangeMinEur" in competitorRaw.findings ? (competitorRaw.findings as CompetitorFindings) : null;
 
   const weights = latestScore?.weightsUsed as Partial<DeterministicScoringWeights> | null;
-  const isDeterministicRubric = !!weights && "operationalRisk" in weights;
+  const isDeterministicRubric = !!weights && "marketPriceOpportunity" in weights;
 
   return (
     <div>
@@ -163,13 +191,20 @@ export default async function OpportunityDetailPage({
               </div>
             </div>
           </CardContent>
-          {margin && (
+          {(detMargin || mockMargin) && (
             <CardContent className="grid grid-cols-2 gap-4 border-t border-border pt-4 sm:grid-cols-4">
-              <Metric label="Inkoopprijs" value={formatEur(margin.findings.buyPriceEur)} />
-              <Metric label="Potentiële verkoopprijs" value={formatEur(margin.findings.sellingPriceEur)} />
+              <Metric label="Inkoopprijs" value={formatEur(detMargin ? detMargin.bestUnitPriceEur : mockMargin!.buyPriceEur)} />
+              <Metric
+                label="Potentiële verkoopprijs"
+                value={formatEur(detMargin ? detMargin.scenarios.expected.sellingPriceEur : mockMargin!.sellingPriceEur)}
+              />
               <Metric
                 label="Verwachte marge"
-                value={`${formatEur(margin.findings.scenarios.base.contributionMarginEur)} (${margin.findings.scenarios.base.marginPercent}%)`}
+                value={
+                  detMargin
+                    ? `${formatEur(detMargin.scenarios.expected.contributionMarginEur)} (${detMargin.scenarios.expected.marginPercent}%)`
+                    : `${formatEur(mockMargin!.scenarios.base.contributionMarginEur)} (${mockMargin!.scenarios.base.marginPercent}%)`
+                }
               />
               {competitorSightings.length > 0 && (
                 <Metric label="Concurrenten gevonden" value={String(competitorSightings.length)} />
@@ -178,19 +213,90 @@ export default async function OpportunityDetailPage({
           )}
         </Card>
 
-        {/* INKOOP & LEVERANCIER */}
-        {(margin || supplier || product.sources.length > 0) && (
+        {/* INKOOP (Alibaba: landed cost + startkapitaal) */}
+        {detMargin && (
+          <SectionCard title="Inkoop">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <Metric label="Beste leveranciersprijs" value={formatEur(detMargin.bestUnitPriceEur)} />
+              <Metric label="MOQ" value={`${detMargin.moq}${detMargin.moqUnit ? ` ${detMargin.moqUnit}` : ""}`} />
+              <Metric label="Geschatte landed cost" value={formatEur(detMargin.landedCost.totalLandedCostEur)} />
+              <Metric
+                label="Startkapitaal (MOQ × landed cost)"
+                value={`${formatEur(detMargin.initialInventoryCommitmentEur)} (${
+                  detMargin.inventoryCommitmentBand === "preferred"
+                    ? "voorkeur"
+                    : detMargin.inventoryCommitmentBand === "acceptable"
+                      ? "acceptabel"
+                      : "hoog"
+                })`}
+              />
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Landed cost: inkoopprijs {formatEur(detMargin.landedCost.unitPriceEur)} + verzending{" "}
+              {formatEur(detMargin.landedCost.shippingPerUnitEur)} + invoerrechten{" "}
+              {formatEur(detMargin.landedCost.importDutyEur)} ({detMargin.landedCost.importDutyPercent}%) + verpakking{" "}
+              {formatEur(detMargin.landedCost.packagingEur)} + fulfilment {formatEur(detMargin.landedCost.fulfillmentEur)}.
+            </p>
+            {detMargin.landedCost.assumptions.length > 0 && (
+              <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                {detMargin.landedCost.assumptions.map((a, i) => (
+                  <li key={i}>⚠ {a}</li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
+        )}
+
+        {/* LEVERANCIERS (Alibaba: Supplier Score) */}
+        {detSupplier && (
+          <SectionCard title="Leveranciers">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <Metric label="Bekende leveranciers" value={String(detSupplier.supplierCount)} />
+              <Metric label="Geverifieerd" value={String(detSupplier.verifiedSupplierCount)} />
+              <Metric label="Trade Assurance" value={String(detSupplier.tradeAssuranceCount)} />
+              <Metric label="Supplier Score" value={`${detSupplier.supplierScore}/100`} />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <Badge variant="outline">
+                concentratierisico:{" "}
+                {detSupplier.supplierConcentrationRisk === "high"
+                  ? "hoog"
+                  : detSupplier.supplierConcentrationRisk === "medium"
+                    ? "gemiddeld"
+                    : "laag"}
+              </Badge>
+              {detSupplier.privateLabelSignal && <Badge variant="secondary">private-label mogelijk (tekstsignaal)</Badge>}
+              {detSupplier.customizationSignal && <Badge variant="secondary">aanpassing mogelijk (tekstsignaal)</Badge>}
+            </div>
+            {detSupplier.scoreBreakdown.length > 0 && (
+              <ul className="mt-3 space-y-0.5 border-t border-border pt-3 text-xs">
+                {detSupplier.scoreBreakdown.map((l, i) => (
+                  <li key={i} className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">{l.label}</span>
+                    <span className={`tabular-nums font-medium ${l.points < 0 ? "text-red-500" : "text-emerald-600 dark:text-emerald-400"}`}>
+                      {l.points > 0 ? "+" : ""}
+                      {l.points}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
+        )}
+
+        {/* INKOOP & LEVERANCIER (mock/LLM mode) */}
+        {(mockMargin || mockSupplier || product.sources.length > 0) && !detMargin && !detSupplier && (
           <SectionCard title="Inkoop & leverancier">
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              {margin && <Metric label="Inkoopprijs" value={formatEur(margin.findings.buyPriceEur)} />}
-              {margin && <Metric label="Verzendkosten" value={formatEur(margin.findings.shippingCostEur)} />}
-              {supplier && (
+              {mockMargin && <Metric label="Inkoopprijs" value={formatEur(mockMargin.buyPriceEur)} />}
+              {mockMargin && <Metric label="Verzendkosten" value={formatEur(mockMargin.shippingCostEur)} />}
+              {mockSupplier && (
                 <Metric
                   label="Levertijd"
-                  value={`${supplier.findings.leadTimeDaysMin}-${supplier.findings.leadTimeDaysMax} dagen`}
+                  value={`${mockSupplier.leadTimeDaysMin}-${mockSupplier.leadTimeDaysMax} dagen`}
                 />
               )}
-              {supplier && <Metric label="Beoordeling leverancier" value={`${supplier.findings.bestSupplier.rating}/5`} />}
+              {mockSupplier && <Metric label="Beoordeling leverancier" value={`${mockSupplier.bestSupplier.rating}/5`} />}
             </div>
             {product.sources.length > 0 && (
               <div className="mt-4 space-y-1.5 border-t border-border pt-4 text-sm">
@@ -230,6 +336,10 @@ export default async function OpportunityDetailPage({
                   />
                   <Metric label="Aantal gevonden aanbieders" value={String(detCompetitor.competitorCount)} />
                   <Metric label="Concurrentieniveau" value={`${detCompetitor.marketSaturationScore}/10`} />
+                  {detCompetitor.priceGapEur != null && (
+                    <Metric label="Prijsgat t.o.v. landed cost (geen winst)" value={formatEur(detCompetitor.priceGapEur)} />
+                  )}
+                  <Metric label="Match-zekerheid" value={`${Math.round(detCompetitor.matchConfidence * 100)}%`} />
                 </>
               )}
               {mockCompetitor && (
@@ -268,17 +378,40 @@ export default async function OpportunityDetailPage({
         )}
 
         {/* MARGE */}
-        {margin && (
+        {detMargin && (
           <SectionCard title="Marge">
             <div className="grid gap-3 sm:grid-cols-3">
-              <ScenarioCard label="Conservatief" tone="danger" data={margin.findings.scenarios.bad} />
-              <ScenarioCard label="Verwacht" tone="info" data={margin.findings.scenarios.base} />
-              <ScenarioCard label="Optimistisch" tone="success" data={margin.findings.scenarios.good} />
+              <ScenarioCard label="Conservatief" tone="danger" data={detMargin.scenarios.conservative} />
+              <ScenarioCard label="Verwacht" tone="info" data={detMargin.scenarios.expected} />
+              <ScenarioCard label="Optimistisch" tone="success" data={detMargin.scenarios.optimistic} />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-4 border-t border-border pt-3 sm:grid-cols-3">
+              <Metric label="Break-even CAC (verwacht)" value={formatEur(detMargin.scenarios.expected.breakEvenCacEur)} />
+              <Metric label="Kapitaalefficiëntie-score" value={`${detMargin.capitalEfficiencyScore}/100`} />
+              <Metric
+                label="Startkapitaal"
+                value={`${formatEur(detMargin.initialInventoryCommitmentEur)} (${
+                  detMargin.inventoryCommitmentBand === "preferred"
+                    ? "voorkeur"
+                    : detMargin.inventoryCommitmentBand === "acceptable"
+                      ? "acceptabel"
+                      : "hoog"
+                })`}
+              />
+            </div>
+          </SectionCard>
+        )}
+        {mockMargin && (
+          <SectionCard title="Marge">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <ScenarioCard label="Conservatief" tone="danger" data={mockMargin.scenarios.bad} />
+              <ScenarioCard label="Verwacht" tone="info" data={mockMargin.scenarios.base} />
+              <ScenarioCard label="Optimistisch" tone="success" data={mockMargin.scenarios.good} />
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
-              BTW {margin.findings.vatRatePercent}% &middot; transactiekosten {margin.findings.transactionFeePercent}%
-              &middot; fulfilment {formatEur(margin.findings.fulfillmentCostEur)} &middot; verwacht retourpercentage{" "}
-              {margin.findings.returnRatePercent}%
+              BTW {mockMargin.vatRatePercent}% &middot; transactiekosten {mockMargin.transactionFeePercent}%
+              &middot; fulfilment {formatEur(mockMargin.fulfillmentCostEur)} &middot; verwacht retourpercentage{" "}
+              {mockMargin.returnRatePercent}%
             </p>
           </SectionCard>
         )}
@@ -289,9 +422,7 @@ export default async function OpportunityDetailPage({
             {isDeterministicRubric && weights ? (
               <div className="space-y-2">
                 {DETERMINISTIC_DIMENSIONS.map((dim) => {
-                  const raw = (latestScore as unknown as Record<string, number | null>)[
-                    dim === "operationalRisk" ? "operationalEase" : dim
-                  ];
+                  const raw = (latestScore as unknown as Record<string, number | null>)[dim];
                   const rawScore = raw ?? 0;
                   const weight = weights[dim] ?? 0;
                   const points = Math.round((rawScore / 10) * weight);
@@ -408,18 +539,15 @@ export default async function OpportunityDetailPage({
           </SectionCard>
         )}
 
-        {/* LEVERANCIERS (detail) */}
-        {supplier && (
+        {/* LEVERANCIERS (mock/LLM mode — real mode's "Leveranciers" section is shown above with the Supplier Score) */}
+        {mockSupplier && (
           <SectionCard title="Leveranciers">
-            <p className="text-sm">{supplier.findings.summary}</p>
+            <p className="text-sm">{mockSupplier.summary}</p>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
-              <Metric label="Bekende leveranciers" value={String(supplier.findings.supplierCount)} />
-              <Metric label="Prijsverschil" value={formatEur(supplier.findings.priceSpreadEur)} />
-              <Metric
-                label="Levertijd"
-                value={`${supplier.findings.leadTimeDaysMin}-${supplier.findings.leadTimeDaysMax}d`}
-              />
-              <Metric label="Kwaliteitsscore" value={`${supplier.findings.supplierQualityScore}/10`} />
+              <Metric label="Bekende leveranciers" value={String(mockSupplier.supplierCount)} />
+              <Metric label="Prijsverschil" value={formatEur(mockSupplier.priceSpreadEur)} />
+              <Metric label="Levertijd" value={`${mockSupplier.leadTimeDaysMin}-${mockSupplier.leadTimeDaysMax}d`} />
+              <Metric label="Kwaliteitsscore" value={`${mockSupplier.supplierQualityScore}/10`} />
             </div>
           </SectionCard>
         )}
@@ -491,6 +619,7 @@ export default async function OpportunityDetailPage({
               <ComplianceRiskBadge risk={product.complianceRisk} />
               <Badge variant="outline">IP-risico: {risk.findings.ipRisk}</Badge>
               <Badge variant="outline">Retourrisico: {risk.findings.returnRiskEstimatePercent}%</Badge>
+              {risk.findings.requiresHumanReview && <Badge variant="destructive">handmatige controle vereist</Badge>}
             </div>
             {risk.findings.flags.length > 0 && (
               <ul className="mt-3 space-y-1 text-sm">

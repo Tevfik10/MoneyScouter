@@ -40,11 +40,24 @@ export interface CompetitorFindings {
   reviewStrength: number;
   priceSpreadEur: number | null;
   marketSaturationScore: number; // 0-10, higher = more saturated/commoditized
+  /** Highest per-match confidence found (0 if no match at all) — surfaced
+   * at the top level so downstream agents (Risk) can flag "low market
+   * match confidence" without re-deriving it from `matches`. */
+  matchConfidence: number;
+  /** median NL market price minus estimated landed cost — explicitly NOT
+   * profit (payment fees, returns, VAT, marketing are not subtracted
+   * here); just the gap that exists before those other costs. Null
+   * whenever either side of the gap is unknown — never guessed. */
+  priceGapEur: number | null;
   matches: CompetitorMatch[];
   summary: string;
 }
 
-export function computeCompetitorFindings(productTitle: string, listings: GoogleShoppingListing[]): CompetitorFindings {
+export function computeCompetitorFindings(
+  productTitle: string,
+  listings: GoogleShoppingListing[],
+  landedCostEur?: number | null,
+): CompetitorFindings {
   const matches: CompetitorMatch[] = listings
     .map((listing) => ({ listing, matchConfidence: titleMatchConfidence(productTitle, listing.title) }))
     .filter((m) => m.matchConfidence >= MIN_MATCH_CONFIDENCE)
@@ -77,6 +90,10 @@ export function computeCompetitorFindings(productTitle: string, listings: Google
   }
   saturation = clamp(saturation, 0, 10);
 
+  const matchConfidence = matches.length > 0 ? matches[0].matchConfidence : 0;
+  const priceGapEur =
+    medianMarketPriceEur != null && landedCostEur != null ? round(medianMarketPriceEur - landedCostEur, 2) : null;
+
   return {
     competitorCount: matches.length,
     medianMarketPriceEur,
@@ -86,10 +103,12 @@ export function computeCompetitorFindings(productTitle: string, listings: Google
     reviewStrength,
     priceSpreadEur,
     marketSaturationScore: saturation,
+    matchConfidence,
+    priceGapEur,
     matches,
     summary:
       matches.length === 0
         ? `No Google Shopping listing matched with confidence >= ${MIN_MATCH_CONFIDENCE}.`
-        : `${matches.length} matched listing(s) (confidence >= ${MIN_MATCH_CONFIDENCE}), median price €${medianMarketPriceEur}, ${merchants.size} distinct merchant(s).`,
+        : `${matches.length} matched listing(s) (confidence >= ${MIN_MATCH_CONFIDENCE}), median price €${medianMarketPriceEur}, ${merchants.size} distinct merchant(s)${priceGapEur != null ? `, price gap €${priceGapEur} (not profit)` : ""}.`,
   };
 }

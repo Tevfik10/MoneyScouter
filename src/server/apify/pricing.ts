@@ -6,9 +6,14 @@
 // anything, per master spec V1.1 section 13 ("if Apify cost cannot be
 // known before a run: use conservative caps on results/run sizes").
 export const APIFY_ACTOR_PRICE_PER_ITEM_USD: Record<string, number> = {
-  "crawlerbros/aliexpress-scraper": 0.003, // $3.00 / 1,000 results — kept as the fallback/alternative provider
-  "tortuga/aliexpress-scraper": 0.002, // $2.00 / 1,000 results, batches multiple search terms in one run — default provider
-  "chris_coussons/google-shopping-scraper": 0.003, // $3.00 / 1,000 results
+  // Active sourcing provider — see docs on the Alibaba sourcing migration.
+  "automation-lab/alibaba-products-scraper": 0.00168, // ~$1.68 / 1,000 products (BRONZE pay-per-event tier) + a negligible one-time $0.001 run-start event
+  // Legacy/inactive AliExpress adapters — kept only for their own unit
+  // tests and possible future reactivation, never called by the active
+  // pipeline. See providers/apify/aliexpress.
+  "crawlerbros/aliexpress-scraper": 0.003, // $3.00 / 1,000 results
+  "tortuga/aliexpress-scraper": 0.002, // $2.00 / 1,000 results
+  "chris_coussons/google-shopping-scraper": 0.003, // $3.00 / 1,000 results — still active, market validation only
 };
 
 // Unknown actors get a deliberately pessimistic fallback rate so a

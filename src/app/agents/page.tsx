@@ -150,7 +150,7 @@ export default async function AgentsPage() {
           </div>
           {discoverySpend && (
             <p className="mt-2 text-xs text-muted-foreground">
-              Apify-kosten Scout (AliExpress-zoekopdrachten): {formatUsdPrecise(Number(discoverySpend._sum.actualCostUsd ?? 0))}
+              Apify-kosten Scout (Alibaba-zoekopdrachten): {formatUsdPrecise(Number(discoverySpend._sum.actualCostUsd ?? 0))}
             </p>
           )}
         </div>

@@ -1,8 +1,14 @@
 import { prisma } from "@/server/db";
 import { DiscoveredProduct } from "@/server/providers/discovery/types";
-import { computeFingerprint, isMeaningfulPriceChange, normalizeTitle } from "@/server/pipeline/fingerprint";
+import {
+  CONCEPT_MATCH_MIN_CONFIDENCE,
+  computeFingerprint,
+  isMeaningfulPriceChange,
+  normalizeTitle,
+  titleConceptMatchConfidence,
+} from "@/server/pipeline/fingerprint";
 
-export type DedupOutcome = "NEW" | "SEEN_BEFORE" | "UPDATED";
+export type DedupOutcome = "NEW" | "SEEN_BEFORE" | "UPDATED" | "NEW_OFFER";
 
 export interface DedupResult {
   productId: string;
@@ -10,6 +16,10 @@ export interface DedupResult {
   outcome: DedupOutcome;
   priceEur: number;
 }
+
+/** How many recent same-category products to check for a concept match
+ * before giving up and creating a new Product — bounds query cost. */
+const CONCEPT_MATCH_CANDIDATE_POOL = 100;
 
 async function upsertSupplier(source: DiscoveredProduct["source"]) {
   return prisma.supplier.upsert({
@@ -40,35 +50,84 @@ export async function upsertDiscoveredProduct(discovered: DiscoveredProduct): Pr
   });
 
   if (!existingFingerprint) {
+    const normalizedTitle = normalizeTitle(discovered.title);
     const supplier = await upsertSupplier(discovered.source);
+    const sourceData = {
+      supplierId: supplier.id,
+      supplierProductId: discovered.source.supplierProductId,
+      url: discovered.source.url,
+      price: discovered.source.price,
+      currency: discovered.source.currency,
+      oldPrice: discovered.source.oldPrice,
+      discountPercent: discovered.source.discountPercent,
+      shippingCost: discovered.source.shippingCost,
+      shippingDays: discovered.source.shippingDays,
+      moq: discovered.source.moq,
+      moqUnit: discovered.source.moqUnit,
+      priceMin: discovered.source.priceMin,
+      priceMax: discovered.source.priceMax,
+      priceTiers: discovered.source.priceTiers as object | undefined,
+      certifications: discovered.source.certifications as object | undefined,
+      reviewCount: discovered.source.reviewCount,
+      orderCount: discovered.source.orderCount,
+      rating: discovered.source.rating,
+      weightGrams: discovered.source.weightGrams,
+      raw: discovered.source.raw as object | undefined,
+    };
+
+    // PRODUCT CONCEPT matching: the same physical product is routinely
+    // listed by many different Alibaba suppliers, each with their own
+    // productId (so the fingerprint above is always "new" for them). Before
+    // creating a brand new Product, check whether a recent product in the
+    // same category has a confidently-similar title — if so, this is a
+    // competing SUPPLIER OFFER on an existing concept, not a new concept.
+    // A low-confidence or no match always falls through to creating a new
+    // Product — never merged on a guess.
+    const candidates = await prisma.product.findMany({
+      where: { category: discovered.category },
+      orderBy: { lastSeenAt: "desc" },
+      take: CONCEPT_MATCH_CANDIDATE_POOL,
+      select: { id: true, normalizedTitle: true },
+    });
+    let bestMatch: { id: string; confidence: number } | null = null;
+    for (const candidate of candidates) {
+      const confidence = titleConceptMatchConfidence(normalizedTitle, candidate.normalizedTitle);
+      if (confidence >= CONCEPT_MATCH_MIN_CONFIDENCE && (!bestMatch || confidence > bestMatch.confidence)) {
+        bestMatch = { id: candidate.id, confidence };
+      }
+    }
+
+    if (bestMatch) {
+      const createdSource = await prisma.productSource.create({
+        data: { ...sourceData, productId: bestMatch.id, conceptMatchConfidence: bestMatch.confidence },
+      });
+      await prisma.product.update({
+        where: { id: bestMatch.id },
+        data: { lastSeenAt: new Date(), timesSeen: { increment: 1 }, fingerprints: { create: { hash } } },
+      });
+      await prisma.priceHistory.create({
+        data: { productSourceId: createdSource.id, price: discovered.source.price },
+      });
+      return {
+        productId: bestMatch.id,
+        productSourceId: createdSource.id,
+        outcome: "NEW_OFFER",
+        priceEur: discovered.source.price,
+      };
+    }
+
     const product = await prisma.product.create({
       data: {
         title: discovered.title,
-        normalizedTitle: normalizeTitle(discovered.title),
+        normalizedTitle,
         category: discovered.category,
         description: discovered.description,
         imageUrl: discovered.imageUrl,
         status: "DISCOVERED",
+        discoveryTheme: discovered.discoveryTheme,
+        discoveryKeyword: discovered.discoveryKeyword,
         fingerprints: { create: { hash } },
-        sources: {
-          create: {
-            supplierId: supplier.id,
-            supplierProductId: discovered.source.supplierProductId,
-            url: discovered.source.url,
-            price: discovered.source.price,
-            currency: discovered.source.currency,
-            oldPrice: discovered.source.oldPrice,
-            discountPercent: discovered.source.discountPercent,
-            shippingCost: discovered.source.shippingCost,
-            shippingDays: discovered.source.shippingDays,
-            moq: discovered.source.moq,
-            reviewCount: discovered.source.reviewCount,
-            orderCount: discovered.source.orderCount,
-            rating: discovered.source.rating,
-            weightGrams: discovered.source.weightGrams,
-            raw: discovered.source.raw as object | undefined,
-          },
-        },
+        sources: { create: sourceData },
       },
       include: { sources: true },
     });
@@ -109,6 +168,11 @@ export async function upsertDiscoveredProduct(discovered: DiscoveredProduct): Pr
         shippingCost: discovered.source.shippingCost,
         shippingDays: discovered.source.shippingDays,
         moq: discovered.source.moq,
+        moqUnit: discovered.source.moqUnit,
+        priceMin: discovered.source.priceMin,
+        priceMax: discovered.source.priceMax,
+        priceTiers: discovered.source.priceTiers as object | undefined,
+        certifications: discovered.source.certifications as object | undefined,
         reviewCount: discovered.source.reviewCount,
         orderCount: discovered.source.orderCount,
         rating: discovered.source.rating,

@@ -1,7 +1,36 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { estimateSellingPriceEur } from "@/server/pipeline/filter";
-import { ProductBundle } from "@/server/pipeline/agents/types";
+import { ProductBundle, ProductSourceSummary } from "@/server/pipeline/agents/types";
 import { getSetting, SETTINGS } from "@/server/settings";
+
+type SourceWithSupplier = Prisma.ProductSourceGetPayload<{ include: { supplier: true } }>;
+
+/** Shapes one ProductSource + its Supplier row into the shared summary DTO
+ * — the Alibaba fields are left undefined (never fabricated) whenever the
+ * underlying row doesn't have them, e.g. mock/legacy AliExpress data. */
+function toSourceSummary(s: SourceWithSupplier): ProductSourceSummary {
+  return {
+    supplierName: s.supplier.name,
+    priceEur: Number(s.price),
+    rating: s.rating ?? 4,
+    shippingDays: s.shippingDays ?? 14,
+    moq: s.moq ?? 1,
+    moqUnit: s.moqUnit ?? undefined,
+    priceMin: s.priceMin ? Number(s.priceMin) : undefined,
+    priceMax: s.priceMax ? Number(s.priceMax) : undefined,
+    priceTiers: (s.priceTiers as ProductSourceSummary["priceTiers"]) ?? undefined,
+    certifications: (s.certifications as string[] | undefined) ?? undefined,
+    supplierCountry: s.supplier.country ?? undefined,
+    supplierYearsOnPlatform: s.supplier.yearsOnPlatform ?? undefined,
+    supplierVerified: s.supplier.verified ?? undefined,
+    supplierGold: s.supplier.goldSupplier ?? undefined,
+    supplierAssessed: s.supplier.assessedSupplier ?? undefined,
+    supplierTradeAssurance: s.supplier.tradeAssurance ?? undefined,
+    supplierResponseRatePercent: s.supplier.responseRatePercent ?? undefined,
+    conceptMatchConfidence: s.conceptMatchConfidence ?? undefined,
+  };
+}
 
 /**
  * Loads a Product + its sources from the DB and shapes them into the
@@ -25,23 +54,13 @@ export async function buildProductBundle(productId: string): Promise<ProductBund
     description: product.description,
     estimatedSellingPriceEur,
     bestSource: {
-      supplierName: best.supplier.name,
-      priceEur: Number(best.price),
+      ...toSourceSummary(best),
       shippingCostEur: Number(best.shippingCost ?? 0),
-      shippingDays: best.shippingDays ?? 14,
-      rating: best.rating ?? 4,
       reviewCount: best.reviewCount ?? 0,
       orderCount: best.orderCount ?? 0,
-      moq: best.moq ?? 1,
       weightGrams: best.weightGrams ?? 500,
     },
-    sources: product.sources.map((s) => ({
-      supplierName: s.supplier.name,
-      priceEur: Number(s.price),
-      rating: s.rating ?? 4,
-      shippingDays: s.shippingDays ?? 14,
-      moq: s.moq ?? 1,
-    })),
+    sources: product.sources.map(toSourceSummary),
   };
 }
 

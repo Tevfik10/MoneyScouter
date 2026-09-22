@@ -107,40 +107,34 @@ const scoutConfigSchema = z.object({
   maxDiscoveryItemsTotal: z.number().int().min(1),
   maxMarketEnrichmentItems: z.number().int().min(0),
   testModeApifyBudgetCapUsd: z.number().positive(),
-  // Which AliExpress discovery Actor to drive — see
-  // src/server/providers/apify/aliexpress/index.ts for the registry.
-  // "aliexpress-tortuga" (default) batches keywords into one Actor run at
-  // $2.00/1,000 results; "aliexpress-crawlerbros" is kept as a fallback,
-  // one run per keyword at $3.00/1,000.
-  aliexpressProviderId: z.string(),
 });
 export type ScoutConfig = z.infer<typeof scoutConfigSchema>;
 const DEFAULT_SCOUT_CONFIG: ScoutConfig = {
   testMode: true,
-  // TEST_SCOUT minimum-cost redesign: start with 1 keyword so real
-  // cost-per-product can be established before scaling up (master spec
-  // V1.1 cost-efficiency follow-up).
+  // TEST_SCOUT minimum-cost design: start with 1 search theme so real
+  // cost-per-product can be established before scaling up.
   maxKeywordsPerRun: 1,
   maxDiscoveryItemsTotal: 100,
   maxMarketEnrichmentItems: 10,
   testModeApifyBudgetCapUsd: 0.5,
-  aliexpressProviderId: "aliexpress-tortuga",
 };
 
-// V1.1 — rule-based Judge rubric weights (master spec V1.1 section 11).
-// Deliberately separate from `scoringWeights` (the LLM_MOCK mode rubric,
-// which includes brandability/marketing-angle dimensions that don't apply
-// without an LLM). Suggested weights from the spec sum to 100, but the
-// Money Score formula normalizes by the actual weight sum regardless.
+// Rule-based Judge rubric weights (MoneyScore V2 — Alibaba sourcing
+// migration). Deliberately separate from `scoringWeights` (the LLM_MOCK
+// mode rubric, which includes brandability/marketing-angle dimensions that
+// don't apply without an LLM). Weights sum to 100 by default, but the
+// Money Score formula normalizes by the actual weight sum regardless, so
+// they don't have to.
 const deterministicScoringWeightsSchema = z.object({
-  margin: z.number().min(0),
-  demand: z.number().min(0),
+  margin: z.number().min(0), // unit economics
+  demand: z.number().min(0), // demand signals
   competition: z.number().min(0),
-  supplierQuality: z.number().min(0),
-  shipping: z.number().min(0),
-  marketPriceOpportunity: z.number().min(0),
-  trend: z.number().min(0),
-  operationalRisk: z.number().min(0),
+  supplierQuality: z.number().min(0), // supplier strength
+  shipping: z.number().min(0), // shipping/logistics
+  marketPriceOpportunity: z.number().min(0), // market opportunity
+  operationalEase: z.number().min(0), // MOQ / capital efficiency
+  brandability: z.number().min(0), // private-label potential
+  risk: z.number().min(0),
   highPotentialMin: z.number().min(0).max(100),
   interestingMin: z.number().min(0).max(100),
   watchMin: z.number().min(0).max(100),
@@ -148,16 +142,53 @@ const deterministicScoringWeightsSchema = z.object({
 export type DeterministicScoringWeights = z.infer<typeof deterministicScoringWeightsSchema>;
 const DEFAULT_DETERMINISTIC_SCORING_WEIGHTS: DeterministicScoringWeights = {
   margin: 25,
-  demand: 20,
-  competition: 15,
+  marketPriceOpportunity: 15,
+  demand: 15,
+  competition: 10,
   supplierQuality: 10,
-  shipping: 10,
-  marketPriceOpportunity: 10,
-  trend: 5,
-  operationalRisk: 5,
+  operationalEase: 10,
+  shipping: 5,
+  brandability: 5,
+  risk: 5,
   highPotentialMin: 80,
   interestingMin: 60,
   watchMin: 40,
+};
+
+// PRODUCT INVESTMENT PROFILE — what MoneyScouter is looking for when
+// sourcing from Alibaba. Drives the Margin/Risk/Judge agents' scoring, not
+// hardcoded there. Defaults reflect a cautious first-test posture: modest
+// selling price band, low capital exposure, low MOQ preferred.
+const investmentProfileSchema = z.object({
+  targetSellingPriceMinEur: z.number().min(0),
+  targetSellingPriceMaxEur: z.number().min(0),
+  // Supplier unit cost should preferably stay under this % of the
+  // estimated consumer selling price.
+  targetSupplierCostMaxPercent: z.number().min(0).max(100),
+  targetMinGrossMarginEur: z.number().min(0),
+  // MOQ bands: <= preferredMoqMax is unpenalized, between that and
+  // moqPenaltyCeiling is penalized (not rejected), above moqHardPenaltyAbove
+  // is a strong negative unless economics are exceptional.
+  preferredMoqMax: z.number().int().min(1),
+  moqPenaltyCeiling: z.number().int().min(1),
+  moqHardPenaltyAbove: z.number().int().min(1),
+  // Initial inventory commitment (MOQ x landed cost) bands, in EUR.
+  preferredInventoryCommitmentEur: z.number().min(0),
+  acceptableInventoryCommitmentMaxEur: z.number().min(0),
+  maxInventoryCommitmentEur: z.number().min(0),
+});
+export type InvestmentProfile = z.infer<typeof investmentProfileSchema>;
+const DEFAULT_INVESTMENT_PROFILE: InvestmentProfile = {
+  targetSellingPriceMinEur: 35,
+  targetSellingPriceMaxEur: 120,
+  targetSupplierCostMaxPercent: 30,
+  targetMinGrossMarginEur: 25,
+  preferredMoqMax: 100,
+  moqPenaltyCeiling: 300,
+  moqHardPenaltyAbove: 300,
+  preferredInventoryCommitmentEur: 1500,
+  acceptableInventoryCommitmentMaxEur: 3000,
+  maxInventoryCommitmentEur: 3000,
 };
 
 const shortlistSchema = z.object({
@@ -194,6 +225,11 @@ export const SETTINGS = {
     schema: deterministicScoringWeightsSchema,
     fallback: DEFAULT_DETERMINISTIC_SCORING_WEIGHTS,
   },
+  investmentProfile: {
+    key: "investment_profile",
+    schema: investmentProfileSchema,
+    fallback: DEFAULT_INVESTMENT_PROFILE,
+  },
 } as const;
 
 export async function getSetting<T>(def: SettingDef<T>): Promise<T> {
@@ -213,15 +249,33 @@ export async function setSetting<T>(def: SettingDef<T>, value: T): Promise<void>
 }
 
 export async function getAllSettings() {
-  const [budget, filterThresholds, scoringWeights, shortlist, apifyBudget, scoutConfig, deterministicScoringWeights] =
-    await Promise.all([
-      getSetting(SETTINGS.budget),
-      getSetting(SETTINGS.filterThresholds),
-      getSetting(SETTINGS.scoringWeights),
-      getSetting(SETTINGS.shortlist),
-      getSetting(SETTINGS.apifyBudget),
-      getSetting(SETTINGS.scoutConfig),
-      getSetting(SETTINGS.deterministicScoringWeights),
-    ]);
-  return { budget, filterThresholds, scoringWeights, shortlist, apifyBudget, scoutConfig, deterministicScoringWeights };
+  const [
+    budget,
+    filterThresholds,
+    scoringWeights,
+    shortlist,
+    apifyBudget,
+    scoutConfig,
+    deterministicScoringWeights,
+    investmentProfile,
+  ] = await Promise.all([
+    getSetting(SETTINGS.budget),
+    getSetting(SETTINGS.filterThresholds),
+    getSetting(SETTINGS.scoringWeights),
+    getSetting(SETTINGS.shortlist),
+    getSetting(SETTINGS.apifyBudget),
+    getSetting(SETTINGS.scoutConfig),
+    getSetting(SETTINGS.deterministicScoringWeights),
+    getSetting(SETTINGS.investmentProfile),
+  ]);
+  return {
+    budget,
+    filterThresholds,
+    scoringWeights,
+    shortlist,
+    apifyBudget,
+    scoutConfig,
+    deterministicScoringWeights,
+    investmentProfile,
+  };
 }

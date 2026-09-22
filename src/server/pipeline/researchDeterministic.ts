@@ -2,15 +2,14 @@ import { AgentType, ModelTier } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { ApifyBudgetExceededError, ApifyCostController } from "@/server/apify/costController";
 import { ProductBundle } from "@/server/pipeline/agents/types";
-import { runMarginAgent } from "@/server/pipeline/agents/margin";
-import { runSupplierAgent } from "@/server/pipeline/agents/supplier";
+import { computeAlibabaMargin } from "@/server/pipeline/agentsDeterministic/alibabaMargin";
+import { computeAlibabaSupplier } from "@/server/pipeline/agentsDeterministic/alibabaSupplier";
 import { computeTrendScore } from "@/server/pipeline/agentsDeterministic/trend";
 import { computeCompetitorFindings } from "@/server/pipeline/agentsDeterministic/competitor";
 import { computeDeterministicRisk } from "@/server/pipeline/agentsDeterministic/risk";
 import { DeterministicJudgeResult, runDeterministicJudge } from "@/server/pipeline/agentsDeterministic/judge";
 import { googleShoppingApifyProvider } from "@/server/providers/apify/googleShopping/provider";
-import { ComplianceRiskLevel } from "@/server/pipeline/filter";
-import { DeterministicScoringWeights, FilterThresholds } from "@/server/settings";
+import { DeterministicScoringWeights, FilterThresholds, InvestmentProfile } from "@/server/settings";
 
 export interface DeterministicResearchResult {
   judge: DeterministicJudgeResult;
@@ -78,24 +77,26 @@ const GOOGLE_SHOPPING_RESULTS_PER_PRODUCT = 10;
 
 /**
  * Deterministic equivalent of research.ts for the Apify pipeline: runs
- * Supplier/Margin (already zero-AI, reused as-is) + Google-Shopping-backed
- * Competitor + real-signal Trend + rule-based Risk + rule-based Judge for
- * one shortlisted product. No LLM call anywhere in this function.
+ * the Alibaba-aware Margin/Supplier agents (landed cost, capital
+ * efficiency, explainable Supplier Score) + Google-Shopping-backed
+ * Competitor (price gap) + real-signal Trend + rule-based Risk + rule-based
+ * MoneyScore V2 Judge for one shortlisted product. No LLM call anywhere in
+ * this function.
  */
 export async function runDeterministicResearch(
   bundle: ProductBundle,
   productSourceId: string,
   researchRunId: string,
   apifyCostController: ApifyCostController,
-  complianceRisk: ComplianceRiskLevel,
+  investmentProfile: InvestmentProfile,
   weights: DeterministicScoringWeights,
   filterThresholds: FilterThresholds,
   skipMarketEnrichment = false,
 ): Promise<DeterministicResearchResult> {
-  const marginRes = runMarginAgent(bundle);
-  const supplierRes = runSupplierAgent(bundle);
-  await persistAgentResult(researchRunId, bundle.id, AgentType.MARGIN, marginRes);
-  await persistAgentResult(researchRunId, bundle.id, AgentType.SUPPLIER, supplierRes);
+  const marginRes = computeAlibabaMargin(bundle, investmentProfile);
+  const supplierRes = computeAlibabaSupplier(bundle);
+  await persistAgentResult(researchRunId, bundle.id, AgentType.MARGIN, { summary: marginRes.summary, findings: marginRes });
+  await persistAgentResult(researchRunId, bundle.id, AgentType.SUPPLIER, { summary: supplierRes.summary, findings: supplierRes });
 
   const [product, priceHistory, priorEnrichmentRuns] = await Promise.all([
     prisma.product.findUniqueOrThrow({ where: { id: bundle.id }, select: { timesSeen: true } }),
@@ -128,7 +129,7 @@ export async function runDeterministicResearch(
     }
   }
 
-  const competitorRes = computeCompetitorFindings(bundle.title, googleShoppingListings);
+  const competitorRes = computeCompetitorFindings(bundle.title, googleShoppingListings, marginRes.landedCost.totalLandedCostEur);
   await persistAgentResult(researchRunId, bundle.id, AgentType.COMPETITOR, {
     summary: competitorRes.summary,
     findings: competitorRes,
@@ -143,17 +144,29 @@ export async function runDeterministicResearch(
   });
   await persistAgentResult(researchRunId, bundle.id, AgentType.TREND, { summary: trendRes.summary, findings: trendRes });
 
-  const riskRes = computeDeterministicRisk(
-    bundle.category,
-    bundle.bestSource.rating,
-    bundle.bestSource.priceEur,
-    filterThresholds,
-  );
+  const leadTimeDaysMax =
+    bundle.sources.length > 0 ? Math.max(...bundle.sources.map((s) => s.shippingDays)) : bundle.bestSource.shippingDays;
+  const riskRes = computeDeterministicRisk({
+    category: bundle.category,
+    title: bundle.title,
+    rating: bundle.bestSource.rating,
+    priceEur: bundle.bestSource.priceEur,
+    thresholds: filterThresholds,
+    moq: bundle.bestSource.moq,
+    supplierCount: bundle.sources.length,
+    verifiedSupplierCount: bundle.sources.filter((s) => s.supplierVerified).length,
+    weightGrams: bundle.bestSource.weightGrams,
+    leadTimeDays: leadTimeDaysMax,
+    landedCostKnown: bundle.bestSource.shippingCostEur > 0,
+    certifications: bundle.bestSource.certifications,
+    marketMatchConfidence: competitorRes.matchConfidence,
+    investmentProfile,
+  });
   await persistAgentResult(researchRunId, bundle.id, AgentType.RISK, { summary: riskRes.summary, findings: riskRes });
 
   const judge = runDeterministicJudge(
     bundle,
-    { margin: marginRes.findings, supplier: supplierRes.findings, competitor: competitorRes, trend: trendRes, risk: riskRes },
+    { margin: marginRes, supplier: supplierRes, competitor: competitorRes, trend: trendRes, risk: riskRes },
     weights,
   );
   await persistAgentResult(researchRunId, bundle.id, AgentType.JUDGE, {
@@ -167,15 +180,19 @@ export async function runDeterministicResearch(
       researchRunId,
       productId: bundle.id,
       demand: judge.scores.demand,
-      trend: judge.scores.trend,
+      // Trend is still measured and persisted on its own (re-discovery
+      // cadence, price movement, order growth) even though MoneyScore V2
+      // folds it into the "demand signals" dimension rather than weighting
+      // it separately — see agentsDeterministic/judge.ts.
+      trend: trendRes.trendScore,
       margin: judge.scores.margin,
       competition: judge.scores.competition,
-      brandability: null,
+      brandability: judge.scores.brandability,
       marketingAngles: null,
       supplierQuality: judge.scores.supplierQuality,
       shipping: judge.scores.shipping,
-      operationalEase: judge.scores.operationalRisk,
-      risk: complianceRisk === "HIGH" ? 2 : complianceRisk === "MEDIUM" ? 5 : 9,
+      operationalEase: judge.scores.operationalEase,
+      risk: judge.scores.risk,
       marketPriceOpportunity: judge.scores.marketPriceOpportunity,
       moneyScore: judge.moneyScore,
       verdict: judge.verdict,
@@ -186,13 +203,14 @@ export async function runDeterministicResearch(
     },
     update: {
       demand: judge.scores.demand,
-      trend: judge.scores.trend,
+      trend: trendRes.trendScore,
       margin: judge.scores.margin,
       competition: judge.scores.competition,
+      brandability: judge.scores.brandability,
       supplierQuality: judge.scores.supplierQuality,
       shipping: judge.scores.shipping,
-      operationalEase: judge.scores.operationalRisk,
-      risk: complianceRisk === "HIGH" ? 2 : complianceRisk === "MEDIUM" ? 5 : 9,
+      operationalEase: judge.scores.operationalEase,
+      risk: judge.scores.risk,
       marketPriceOpportunity: judge.scores.marketPriceOpportunity,
       moneyScore: judge.moneyScore,
       verdict: judge.verdict,

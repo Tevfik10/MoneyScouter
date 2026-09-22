@@ -1,3 +1,7 @@
+// LEGACY / INACTIVE — see ./LEGACY.md. Not imported by the active
+// pipeline (orchestratorReal.ts uses @/server/providers/apify/alibaba
+// instead). Kept only for this directory's own unit tests and possible
+// future reactivation.
 import { AliExpressDiscoveryProvider } from "@/server/providers/apify/aliexpress/types";
 import { crawlerbrosAliExpressProvider } from "@/server/providers/apify/aliexpress/crawlerbros/provider";
 import { tortugaAliExpressProvider } from "@/server/providers/apify/aliexpress/tortuga/provider";
