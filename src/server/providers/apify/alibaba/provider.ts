@@ -11,12 +11,18 @@ import { ApifyRunInfo } from "@/server/providers/apify/types";
 
 export const ALIBABA_ACTOR_ID = "automation-lab/alibaba-products-scraper";
 
+// Field names verified against the Actor's live documented input schema
+// (apify.com/automation-lab/alibaba-products-scraper/input-schema): queries,
+// maxItems, maxPagesPerQuery, minPrice, maxPrice, maxMinimumOrder. There is
+// no "minMoq" input field on this Actor at all — a stray `minMoq: undefined`
+// here was previously dropped silently by JSON serialization (harmless at
+// runtime) but misleading to read, since the real minimum-MOQ-side filter
+// this Actor exposes doesn't exist; only a maximum (maxMinimumOrder) does.
 function buildActorInput(params: AlibabaSearchParams): Record<string, unknown> {
   return {
     queries: params.keywords.map((k) => k.keyword),
     maxItems: params.maxItemsTotal,
     maxPagesPerQuery: 2,
-    minMoq: undefined,
     maxMinimumOrder: params.maxMoq,
     minPrice: params.minPrice,
     maxPrice: params.maxPrice,

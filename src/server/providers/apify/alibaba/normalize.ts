@@ -3,24 +3,44 @@ import { z } from "zod";
 import { DiscoveredProduct } from "@/server/providers/discovery/types";
 
 // automation-lab/alibaba-products-scraper's product-record shape,
-// defensively parsed — confirmed against the Actor's documented pricing/
-// input/output page, not a raw sample run (we have no Apify token in this
-// environment and must not spend anything to get one). Every field beyond
-// productId/title is optional and several accept more than one plausible
-// spelling, because a third-party actor's output schema can drift or be
-// summarized loosely in its docs — a malformed/unexpected item should be
-// skipped, never crash the whole batch, and an unverified field name
-// should degrade to "unknown" rather than silently reading the wrong
-// value.
+// defensively parsed against the Actor's documented output schema
+// (https://apify.com/automation-lab/alibaba-products-scraper) — a
+// malformed/unexpected item should be skipped, never crash the whole
+// batch, and an unverified field name should degrade to "unknown" rather
+// than silently reading the wrong value.
+//
+// IMPORTANT: the documented schema explicitly marks several fields
+// nullable (rating, reviewCount, soldCount, supplierResponseRate) — real
+// Alibaba listings commonly have no reviews/orders/response-rate data yet
+// and the Actor reports that as `null`, not a missing key. A bare
+// `.optional()` zod field only accepts `undefined`, so a single `null`
+// value anywhere in the object fails the ENTIRE item's safeParse (this
+// object isn't .strict(), but every DECLARED field is still type-checked)
+// — silently dropping every real item into skippedCount while a mocked
+// test fixture (which never sets a field to literal null) sails through.
+// `opt()` accepts both null and undefined and collapses either to
+// undefined, so every field downstream keeps working with the same
+// `T | undefined` shape it already assumed.
+function opt<T extends z.ZodTypeAny>(schema: T) {
+  return schema
+    .nullable()
+    .optional()
+    .transform((v) => v ?? undefined);
+}
+
 const priceTierSchema = z
   .object({
-    minimumQuantity: z.number().optional(),
-    minQuantity: z.number().optional(),
+    minimumQuantity: opt(z.number()),
+    minQuantity: opt(z.number()),
+    // Unlike the fields above, a null upper bound is meaningful here
+    // ("no maximum quantity for this tier") and is preserved as null all
+    // the way through to the stored ProductSource.priceTiers, not
+    // collapsed to undefined.
     maximumQuantity: z.number().nullable().optional(),
     maxQuantity: z.number().nullable().optional(),
-    price: z.union([z.number(), z.string()]).optional(),
-    unit: z.string().optional(),
-    currency: z.string().optional(),
+    price: opt(z.union([z.number(), z.string()])),
+    unit: opt(z.string()),
+    currency: opt(z.string()),
   })
   .passthrough();
 
@@ -28,54 +48,54 @@ const rawItemSchema = z
   .object({
     productId: z.union([z.string(), z.number()]),
     title: z.string().min(1),
-    productUrl: z.string().optional(),
-    url: z.string().optional(),
-    imageUrl: z.string().optional(),
-    mainImage: z.string().optional(),
-    category: z.string().optional(),
+    productUrl: opt(z.string()),
+    url: opt(z.string()),
+    imageUrl: opt(z.string()),
+    mainImage: opt(z.string()),
+    category: opt(z.string()),
 
-    price: z.union([z.number(), z.string()]).optional(),
-    minimumPrice: z.union([z.number(), z.string()]).optional(),
-    priceMin: z.union([z.number(), z.string()]).optional(),
-    maximumPrice: z.union([z.number(), z.string()]).optional(),
-    priceMax: z.union([z.number(), z.string()]).optional(),
-    currency: z.string().optional(),
-    priceTiers: z.array(priceTierSchema).optional(),
-    quantityPrices: z.array(priceTierSchema).optional(),
+    price: opt(z.union([z.number(), z.string()])),
+    minimumPrice: opt(z.union([z.number(), z.string()])),
+    priceMin: opt(z.union([z.number(), z.string()])),
+    maximumPrice: opt(z.union([z.number(), z.string()])),
+    priceMax: opt(z.union([z.number(), z.string()])),
+    currency: opt(z.string()),
+    priceTiers: opt(z.array(priceTierSchema)),
+    quantityPrices: opt(z.array(priceTierSchema)),
 
-    minimumOrder: z.union([z.number(), z.string()]).optional(),
-    minOrderQuantity: z.union([z.number(), z.string()]).optional(),
-    moq: z.union([z.number(), z.string()]).optional(),
-    unit: z.string().optional(),
-    minimumOrderUnit: z.string().optional(),
-    moqUnit: z.string().optional(),
+    minimumOrder: opt(z.union([z.number(), z.string()])),
+    minOrderQuantity: opt(z.union([z.number(), z.string()])),
+    moq: opt(z.union([z.number(), z.string()])),
+    unit: opt(z.string()),
+    minimumOrderUnit: opt(z.string()),
+    moqUnit: opt(z.string()),
 
-    supplierName: z.string().optional(),
-    companyName: z.string().optional(),
-    supplierId: z.union([z.string(), z.number()]).optional(),
-    supplierUrl: z.string().optional(),
-    supplierCountry: z.string().optional(),
-    country: z.string().optional(),
-    supplierYears: z.number().optional(),
-    supplierYearsOnAlibaba: z.number().optional(),
+    supplierName: opt(z.string()),
+    companyName: opt(z.string()),
+    supplierId: opt(z.union([z.string(), z.number()])),
+    supplierUrl: opt(z.string()),
+    supplierCountry: opt(z.string()),
+    country: opt(z.string()),
+    supplierYears: opt(z.number()),
+    supplierYearsOnAlibaba: opt(z.number()),
 
-    verifiedSupplier: z.boolean().optional(),
-    isVerifiedSupplier: z.boolean().optional(),
-    goldSupplier: z.boolean().optional(),
-    isGoldSupplier: z.boolean().optional(),
-    assessedSupplier: z.boolean().optional(),
-    tradeAssurance: z.boolean().optional(),
-    isTradeAssurance: z.boolean().optional(),
-    supplierResponseRate: z.union([z.number(), z.string()]).optional(),
-    responseRatePercent: z.union([z.number(), z.string()]).optional(),
+    verifiedSupplier: opt(z.boolean()),
+    isVerifiedSupplier: opt(z.boolean()),
+    goldSupplier: opt(z.boolean()),
+    isGoldSupplier: opt(z.boolean()),
+    assessedSupplier: opt(z.boolean()),
+    tradeAssurance: opt(z.boolean()),
+    isTradeAssurance: opt(z.boolean()),
+    supplierResponseRate: opt(z.union([z.number(), z.string()])),
+    responseRatePercent: opt(z.union([z.number(), z.string()])),
 
-    rating: z.union([z.number(), z.string()]).optional(),
-    reviewScore: z.union([z.number(), z.string()]).optional(),
-    reviewCount: z.number().optional(),
-    soldCount: z.number().optional(),
+    rating: opt(z.union([z.number(), z.string()])),
+    reviewScore: opt(z.union([z.number(), z.string()])),
+    reviewCount: opt(z.number()),
+    soldCount: opt(z.number()),
 
-    certificates: z.array(z.string()).optional(),
-    certifications: z.array(z.string()).optional(),
+    certificates: opt(z.array(z.string())),
+    certifications: opt(z.array(z.string())),
   })
   .passthrough();
 
