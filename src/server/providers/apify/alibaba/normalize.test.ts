@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { normalizeAlibabaItem } from "@/server/providers/apify/alibaba/normalize";
 
+// The Actor quotes prices in USD; normalize.ts converts to EUR at a fixed
+// approximate rate (see normalize.ts's USD_TO_EUR_RATE) since every
+// downstream consumer assumes EUR. Mirrored here so assertions don't
+// hardcode a rate that could drift out of sync with the real one.
+const USD_TO_EUR_RATE = 0.92;
+function eur(usd: number): number {
+  return Math.round(usd * USD_TO_EUR_RATE * 100) / 100;
+}
+
 describe("normalizeAlibabaItem", () => {
   it("normalizes a well-formed item with price tiers, MOQ and supplier verification fields", () => {
     const raw = {
@@ -36,14 +45,15 @@ describe("normalizeAlibabaItem", () => {
     expect(result!.title).toBe(raw.title);
     expect(result!.category).toBe("travel");
     expect(result!.source.supplierPlatform).toBe("alibaba");
-    expect(result!.source.price).toBe(12); // minimumPrice used as the representative price
-    expect(result!.source.priceMin).toBe(12);
-    expect(result!.source.priceMax).toBe(16);
+    // minimumPrice used as the representative price, converted USD -> EUR
+    expect(result!.source.price).toBe(eur(12));
+    expect(result!.source.priceMin).toBe(eur(12));
+    expect(result!.source.priceMax).toBe(eur(16));
     expect(result!.source.moq).toBe(100);
     expect(result!.source.moqUnit).toBe("pieces");
     expect(result!.source.priceTiers).toEqual([
-      { minQuantity: 100, maxQuantity: 499, price: 14, unit: undefined },
-      { minQuantity: 500, maxQuantity: null, price: 12, unit: undefined },
+      { minQuantity: 100, maxQuantity: 499, price: eur(14), unit: undefined },
+      { minQuantity: 500, maxQuantity: null, price: eur(12), unit: undefined },
     ]);
     expect(result!.source.supplierName).toBe("Shenzhen Demo Trading Co.");
     expect(result!.source.supplierExternalId).toBe("555");
@@ -57,11 +67,21 @@ describe("normalizeAlibabaItem", () => {
     expect(result!.source.orderCount).toBe(1200);
   });
 
+  it("converts USD-quoted prices to EUR and labels the stored currency as EUR (Actor has no EUR/region option)", () => {
+    const raw = { productId: 1, title: "Item", minimumPrice: 20, maximumPrice: 30, currency: "USD" };
+    const result = normalizeAlibabaItem(raw, "gadgets");
+    expect(result?.source.price).toBe(eur(20));
+    expect(result?.source.priceMax).toBe(eur(30));
+    expect(result?.source.currency).toBe("EUR");
+    // Sanity: the conversion actually changed the number, not a no-op.
+    expect(result?.source.price).not.toBe(20);
+  });
+
   it("falls back to a flat price when no minimum/maximum price is present", () => {
     const raw = { productId: 1, title: "Item", price: 9.5 };
     const result = normalizeAlibabaItem(raw, "gadgets");
-    expect(result?.source.price).toBe(9.5);
-    expect(result?.source.priceMin).toBe(9.5);
+    expect(result?.source.price).toBe(eur(9.5));
+    expect(result?.source.priceMin).toBe(eur(9.5));
     expect(result?.source.priceMax).toBeUndefined();
   });
 
@@ -105,7 +125,7 @@ describe("normalizeAlibabaItem", () => {
     };
     const result = normalizeAlibabaItem(raw, "gadgets");
     expect(result?.source.priceTiers).toHaveLength(1);
-    expect(result?.source.priceTiers?.[0]).toEqual({ minQuantity: 100, maxQuantity: null, price: 5, unit: undefined });
+    expect(result?.source.priceTiers?.[0]).toEqual({ minQuantity: 100, maxQuantity: null, price: eur(5), unit: undefined });
   });
 
   it("resolves alternate field name spellings (moq vs minOrderQuantity, isVerifiedSupplier, etc.)", () => {
@@ -184,7 +204,7 @@ describe("normalizeAlibabaItem — real production output shape (nullable fields
     expect(result!.title).toBe(raw.title);
     // category was null on the raw item -> falls back to the caller's category, never crashes.
     expect(result!.category).toBe("home-organization");
-    expect(result!.source.price).toBe(3.2);
+    expect(result!.source.price).toBe(eur(3.2));
     expect(result!.source.moq).toBe(50);
     expect(result!.source.supplierTradeAssurance).toBe(true);
     // Null fields degrade to undefined — never fabricated, never NaN, never thrown.
@@ -241,7 +261,7 @@ describe("normalizeAlibabaItem — real production output shape (nullable fields
     expect(() => normalizeAlibabaItem(raw, "gadgets")).not.toThrow();
     const result = normalizeAlibabaItem(raw, "gadgets");
     expect(result).not.toBeNull();
-    expect(result!.source.price).toBe(5);
+    expect(result!.source.price).toBe(eur(5));
     expect(result!.source.supplierName).toContain("Onbekende leverancier");
   });
 });

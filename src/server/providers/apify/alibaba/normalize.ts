@@ -110,11 +110,29 @@ function toNumber(v: number | string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+// The Actor's own input schema documents its price filters as "USD price"
+// — unlike the legacy AliExpress adapter (which could request `region:
+// "nl"` and get back NL/EUR-localized prices), this Actor has no
+// currency/region input at all and always quotes in USD. Every downstream
+// consumer (filter thresholds, the landed-cost model, MoneyScore) already
+// assumes ProductSource.price is EUR-denominated — that assumption was
+// never actually true for Alibaba data, so every price silently ran ~8%
+// hot compared to what the EUR thresholds intended. A fixed approximate
+// rate, applied once here at the ingestion boundary, is a labelled
+// assumption (like the landed-cost model's own duty-rate assumption) —
+// not a scoring-strategy or threshold change; the thresholds themselves
+// are untouched.
+const USD_TO_EUR_RATE = 0.92;
+
+function toEur(amount: number): number {
+  return Math.round(amount * USD_TO_EUR_RATE * 100) / 100;
+}
+
 function extractPrice(item: AlibabaRawItem): number | null {
   const min = toNumber(item.minimumPrice ?? item.priceMin);
-  if (min != null) return min;
+  if (min != null) return toEur(min);
   const flat = toNumber(item.price);
-  if (flat != null) return flat;
+  if (flat != null) return toEur(flat);
   return null;
 }
 
@@ -132,7 +150,7 @@ function extractPriceTiers(
     const minQuantity = t.minimumQuantity ?? t.minQuantity;
     const price = toNumber(t.price);
     if (minQuantity == null || price == null) continue;
-    tiers.push({ minQuantity, maxQuantity: t.maximumQuantity ?? t.maxQuantity ?? null, price, unit: t.unit });
+    tiers.push({ minQuantity, maxQuantity: t.maximumQuantity ?? t.maxQuantity ?? null, price: toEur(price), unit: t.unit });
   }
   return tiers.length > 0 ? tiers : undefined;
 }
@@ -158,7 +176,8 @@ export function normalizeAlibabaItem(raw: unknown, category: string): Discovered
   if (price === null) return null; // unusable without a price
 
   const supplierName = item.supplierName ?? item.companyName ?? "Onbekende leverancier (Alibaba)";
-  const priceMax = toNumber(item.maximumPrice ?? item.priceMax);
+  const priceMaxRaw = toNumber(item.maximumPrice ?? item.priceMax);
+  const priceMax = priceMaxRaw != null ? toEur(priceMaxRaw) : undefined;
   const certifications = item.certificates ?? item.certifications;
 
   return {
@@ -172,11 +191,15 @@ export function normalizeAlibabaItem(raw: unknown, category: string): Discovered
       supplierProductId: String(item.productId),
       url: item.productUrl ?? item.url,
       price,
-      currency: item.currency ?? "USD",
+      // price/priceMin/priceMax/priceTiers are already converted to EUR
+      // above (see toEur) — the Actor has no EUR-quoting option, so the
+      // stored currency reflects what the numbers actually are now, not
+      // the Actor's raw USD quote.
+      currency: "EUR",
       moq: extractMoq(item),
       moqUnit: item.moqUnit ?? item.minimumOrderUnit ?? item.unit,
       priceMin: price,
-      priceMax: priceMax ?? undefined,
+      priceMax,
       priceTiers: extractPriceTiers(item),
       certifications: certifications && certifications.length > 0 ? certifications : undefined,
       reviewCount: item.reviewCount,
